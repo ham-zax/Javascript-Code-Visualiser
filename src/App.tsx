@@ -66,11 +66,13 @@ hello("World")`)
         setEvents(m.payload)
         setErrorMsg(null)
         setIdx(0)
+        setIsRunning(false)
       } else if (m.type === 'EXECUTION_ERROR') {
         setErrorMsg(m.payload.message)
         toast.error(m.payload.message)
         setEvents([])
         setIdx(0)
+        setIsRunning(false)
       }
     }
     s.onclose = () => console.log('WS closed')
@@ -79,13 +81,17 @@ hello("World")`)
   }, [])
 
   // 5) send RUN and STOP
+  const [isRunning, setIsRunning] = useState(false);
+
   const run = () => {
     if (!ws || ws.readyState !== 1) return
+    setIsRunning(true);
     setEvents([]); setErrorMsg(null); setIdx(0)
     ws.send(JSON.stringify({ type: 'RUN_CODE', payload: { code: codeInput } }))
   }
   const stop = () => {
     if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'STOP' }))
+    setIsRunning(false);
     setIdx(0); setEvents([]); setErrorMsg(null)
   }
 
@@ -184,9 +190,9 @@ hello("World")`)
         <div className="flex gap-2">
           <button
             onClick={run}
-            disabled={events.length > 0}
+            disabled={isRunning || events.length > 0}
             className="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50"
-          >Run</button>
+          >{isRunning ? 'Running…' : 'Run'}</button>
           <button
             onClick={stop}
             className="px-4 py-2 bg-red-500 text-white rounded"
