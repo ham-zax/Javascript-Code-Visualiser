@@ -169,12 +169,31 @@ const reduceEvents = (events) => {
 
   console.log({ resolvedPromiseIds, promisesWithInvokedCallbacksInfo, parentsIdsOfPromisesWithInvokedCallbacks, parentsIdsOfMicrotasks });
 
-  return events.reduce(eventsReducer, {
+  const raw = events.reduce(eventsReducer, {
     events: [],
     parentsIdsOfPromisesWithInvokedCallbacks,
     parentsIdsOfMicrotasks,
     prevEvt: {},
   }).events;
+
+  // === NEW: drop all InitPromise/BeforePromise/... noise ===
+  const WHITELIST = new Set([
+    'Step',
+    'EnterFunction',
+    'ExitFunction',
+    'Locals',
+    'VarWrite',
+    'VarRead',
+    'ConsoleLog',
+    'ConsoleWarn',
+    'ConsoleError',
+    'Closure',
+    'ErrorFunction',
+    'UncaughtError',
+    'EarlyTermination'
+  ]);
+
+  return raw.filter(evt => WHITELIST.has(evt.type));
 };
 
 module.exports = { reduceEvents };

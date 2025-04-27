@@ -12,7 +12,9 @@ const prettyFormat = require('pretty-format').default; // Import default export
 
 const { traceLoops } = require('./loopTracer');
 const traceLines = require('./traceLines');
-const traceScopeAndClosures = require('./traceScopeAndClosures');
+// const traceScopeAndClosures = require('./traceScopeAndClosures'); // Replaced
+const traceScope = require('./traceScope');             // New scope plugin
+const traceVariables = require('./traceVariables');       // New variable plugin
 const traceFunctions = require('./traceFunctions'); // Require the new plugin
 const preserveLoc = require('./preserveLoc');
 
@@ -103,11 +105,12 @@ try {
       filename: 'userCode.js', // Optional: Good practice for sourcemaps/errors
       sourceMaps: false,      // Keep false for now unless you plan to use them
       plugins: [
-        preserveLoc,                               // 1) stash every original loc
-        traceLoops,                                // 2) loop‐tracing (optional order)
-        [traceLines, { originalSource: jsSourceCode }], // 3) line‐tracing (uses __origLoc if needed)
-        traceScopeAndClosures,                     // 4) var/closure tracing
-        traceFunctions                             // 5) wrap functions in try/catch/finally
+        preserveLoc,                                 // 1) stash loc
+        traceLoops,                                  // 2) timeout checks
+        [ traceLines, { originalSource: jsSourceCode } ], // 3) step calls
+        traceScope,                                  // 4) locals & closures
+        traceVariables,                              // 5) varWrite & varRead
+        traceFunctions                               // 6) enter/exit/errorFunc
       ]
     })
     .code;
@@ -223,15 +226,20 @@ const Tracer = {
   },
 
   // Methods for variable tracking
-  varWrite: (name, val) => postEvent({
-    type: "VarWrite",
-    payload: { name, val: prettyFormat(val) }
-  }),
-
-  varRead: (name, val) => postEvent({
-    type: "VarRead",
-    payload: { name, val: prettyFormat(val) }
-  }),
+  varWrite: (name, val) => {
+    postEvent({
+      type: "VarWrite",
+      payload: { name, val: prettyFormat(val) }
+    });
+    return val;    // ← return the assigned value
+  },
+  varRead: (name, val) => {
+    postEvent({
+      type: "VarRead",
+      payload: { name, val: prettyFormat(val) }
+    });
+    return val;    // ← return the original value
+  },
 
   // Method for closure capture
   captureClosure: (fnId, bindings) => {

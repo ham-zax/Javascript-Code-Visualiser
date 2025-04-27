@@ -178,6 +178,18 @@ module.exports = function traceScopeAndClosures({ types: t }) {
         if (path.isReferencedIdentifier()) {
           const name = path.node.name;
 
+          // 1) Skip reads of function parameters
+          const binding = path.scope.getBinding(name);
+          if (binding && binding.kind === 'param') return;
+
+          // 2) Skip reads when this identifier *is* the callee of a call expression
+          if (
+            path.parentPath.isCallExpression() &&
+            path.parentKey === 'callee'
+          ) {
+            return;
+          }
+
           // Filter known internal/global names
           if (SKIP_NAMES.has(name)) return;
 
