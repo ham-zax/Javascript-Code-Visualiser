@@ -160,6 +160,10 @@ hello("World")`)
           >Reset</button>
         </div>
         {errorMsg && <div className="text-red-700">{errorMsg}</div>}
+        {/* Visual code viewer below */}
+        <div className="pt-4">
+          <CodeViewer code={codeInput} ref={codeRef} />
+        </div>
       </div>
 
       {/* B) Stepper Controls */}
