@@ -118,3 +118,23 @@
     @apply bg-background text-foreground;
   }
 }
+
+
+.highlight-current { 
+background-color: rgba(100, 100, 0, 0.2) !important; /* Subtle yellow/green */
+width: 100%;
+display: block;
+}
+
+.highlight-return {
+  background-color: rgba(0, 100, 200, 0.15) !important; /* Subtle blue */
+  width: 100%;
+  display: block;
+}
+
+/* Optional: Highlight the line where the current function was called */
+.highlight-call {
+  background-color: rgba(100, 100, 100, 0.15) !important; /* Subtle grey */
+  width: 100%;
+  display: block;
+}

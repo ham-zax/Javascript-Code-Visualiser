@@ -2,7 +2,8 @@
 import React, { forwardRef, useImperativeHandle, useState } from 'react';
 
 export interface GlobalScopePaneHandle {
-  setGlobal(name: string, value: any): void;
+  // Replace setGlobal with setAllGlobals
+  setAllGlobals(globals: Record<string, any>): void;
   reset(): void;
 }
 
@@ -10,8 +11,9 @@ export const GlobalScopePane = forwardRef<GlobalScopePaneHandle>((_, ref) => {
   const [globals, setGlobals] = useState<Record<string, any>>({});
 
   useImperativeHandle(ref, () => ({
-    setGlobal(name: string, value: any) {
-      setGlobals(prev => ({ ...prev, [name]: value }));
+    // Method to set the entire global state at once
+    setAllGlobals(newGlobals: Record<string, any>) {
+      setGlobals(newGlobals || {}); // Ensure it's an object
     },
     reset() {
       setGlobals({});
