@@ -1,14 +1,13 @@
 // src/App.tsx
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Toaster, toast } from 'sonner'
-import Xarrow from 'react-xarrows';
 
-import { CodeDisplay } from './components/CodeDisplay'
-import { CallStackPanel } from './components/CallStackPanel'
-import { ScopePanel } from './components/ScopePanel'
+import { CodeViewer, CodeViewerHandle } from './components/CodeViewer'
+import { ConsolePane, ConsolePaneHandle } from './components/ConsolePane'
+import { CallStackPanel, CallStackPaneHandle } from './components/CallStackPanel'
+import { GlobalScopePane, GlobalScopePaneHandle } from './components/GlobalScopePane'
 import { Controls } from './components/Controls'
 import { Legend } from './components/Legend'
-import { OutputPanel } from './components/OutputPanel'
 
 type EventPayload = any
 
@@ -34,12 +33,12 @@ export default function App() {
 }
 
 function Visualizer() {
-  // 1) WebSocket & raw events
+  // 1) WebSocket & story events
   const [ws, setWs] = useState<WebSocket | null>(null)
   const [events, setEvents] = useState<TraceEvent[]>([])
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  // 2) playhead
+  // 2) playhead index
   const [idx, setIdx] = useState(0)
 
   // 3) code input
@@ -62,7 +61,13 @@ hello("World")`)
     }
     s.onmessage = msg => {
       const m = JSON.parse(msg.data) as TraceEvent
-      if (m.type === 'EVENT_LIST') {
+      if (m.type === 'STORY_LIST') {
+        setEvents(m.payload)
+        setErrorMsg(null)
+        setIdx(0)
+        setIsRunning(false)
+      } else if (m.type === 'EVENT_LIST') {
+        // backward compatibility: treat as story
         setEvents(m.payload)
         setErrorMsg(null)
         setIdx(0)
@@ -70,6 +75,8 @@ hello("World")`)
       } else if (m.type === 'EXECUTION_ERROR') {
         setErrorMsg(m.payload.message)
         toast.error(m.payload.message)
+        // Also display error in console pane
+        consoleRef.current?.append(`Error: ${m.payload.message}`)
         setEvents([])
         setIdx(0)
         setIsRunning(false)
@@ -95,91 +102,45 @@ hello("World")`)
     setIdx(0); setEvents([]); setErrorMsg(null)
   }
 
-  // 6) derive a “snapshot” by replaying events[0..idx]
-  const snapshot = useMemo(() => {
-    // defaults
-    let highlightedLines: number[] = []
-    let callStack: { id: string, functionName: string, localScope: any }[] = [
-      { id: 'global', functionName: '(global)', localScope: {} }
-    ]
-    let globalScope: Record<string, any> = {}
-    let closures: Record<string, any> = {}
-    let output: string[] = []
+  // refs for pane controls
+  const codeRef = useRef<CodeViewerHandle>(null)
+  const consoleRef = useRef<ConsolePaneHandle>(null)
+  const callStackRef = useRef<CallStackPaneHandle>(null)
+  const globalRef = useRef<GlobalScopePaneHandle>(null)
 
-    // replay
-    for (let i = 0; i <= idx && i < events.length; i++) {
+  // 3) step controls
+  const isFirst = idx <= 0
+  const isLast = idx >= events.length
+
+  // --- Imperative next/prev/reset handlers ---
+  const resetAll = () => {
+    codeRef.current?.reset()
+    consoleRef.current?.reset()
+    callStackRef.current?.reset()
+    globalRef.current?.reset()
+  }
+  const replayTo = (n: number) => {
+    resetAll()
+    for (let i = 0; i < n && i < events.length; i++) {
       const ev = events[i]
       switch (ev.type) {
-        case 'Step':
-          highlightedLines = [ev.payload.line]
-          break
-
-        case 'EnterFunction':
-          callStack.push({
-            id: String(ev.payload.id),
-            functionName: ev.payload.name,
-            localScope: {}
-          })
-          break
-
-        case 'ExitFunction':
-          callStack.pop()
-          break
-
-        case 'Locals':
-          // assign locals into top frame
-          callStack[callStack.length - 1].localScope = ev.payload
-          break
-
-        case 'Closure':
-          closures[String(ev.payload.fnId)] = ev.payload
-          break
-
-        case 'ConsoleLog':
-          output.push(ev.payload.message)
-          break
-
-        // you could handle VarWrite here to fill globalScope,
-        // or VarRead if you really want to show reads.
-        default:
-          break
+        case 'STEP_LINE': codeRef.current?.highlightLine(ev.payload.line); break
+        case 'CALL': callStackRef.current?.pushFrame(ev.payload.funcName, ev.payload.args); break
+        case 'RETURN': callStackRef.current?.popFrame(); break
+        case 'ASSIGN': globalRef.current?.setGlobal(ev.payload.varName, ev.payload.newValue); break
+        case 'CONSOLE': consoleRef.current?.append(ev.payload.text); break
+        default: break
       }
     }
-
-    // pick up closure for top frame if any
-    const top = callStack[callStack.length - 1]
-    const capturedScope = closures[top.id]?.[1] === undefined
-      ? closures[top.id]?.[1] // if you passed [fnId, bindings]
-      : closures[top.id]?.payload
-    const closureSourceName = top.functionName
-
-    return {
-      highlightedLines,
-      codeLines: codeInput.split('\n'),
-      callStack,
-      globalScope,
-      currentContext: top,
-      capturedScope,
-      closureSourceName,
-      output
-    }
-  }, [events, idx, codeInput])
-
-  // 7) step controls
-  const isFirst = idx <= 0
-  const isLast = idx >= events.length - 1
-
-  // --- ARROW REFS ---
-  const codeLineRef = useRef<HTMLDivElement>(null);
-  const topFrameRef = useRef<HTMLLIElement>(null);
-
-  // --- IDs for Xarrow (fallback if needed) ---
-  // const codeLineId = 'active-code-line';
-  // const topFrameId = 'top-stack-frame';
+    setIdx(n)
+  }
+  const handleNext = () => !isLast && replayTo(idx + 1)
+  const handlePrev = () => !isFirst && replayTo(idx - 1)
+  const handleReset = () => replayTo(0)
 
   return (
     <div className="space-y-6 relative">
-      {/* A) Editor + Run/Stop */}
+      {/* A) Code input & Run/Reset */}
       <div className="space-y-2">
         <textarea
           className="w-full h-32 p-2 border rounded font-mono text-sm"
@@ -201,18 +162,16 @@ hello("World")`)
         {errorMsg && <div className="text-red-700">{errorMsg}</div>}
       </div>
 
-      {/* B) Controls Bar */}
+      {/* B) Stepper Controls */}
       <Controls
-        onPrevStep={() => setIdx(i => Math.max(0, i - 1))}
-        onNextStep={() => setIdx(i => Math.min(events.length - 1, i + 1))}
-        onReset={() => setIdx(0)}
+        onNextStep={handleNext}
+        onPrevStep={handlePrev}
+        onStepOver={handlePrev /* or specialized handleStepOver? adjust if implemented */}
+        onStepOut={handlePrev /* or specialized handleStepOut? implement if needed */}
+        onReset={handleReset}
         isFirstStep={isFirst}
         isLastStep={isLast}
-        currentStepDescription={
-          events[idx]?.type === 'Step'
-            ? events[idx].payload.snippet
-            : events[idx]?.type || ''
-        }
+        currentStepDescription={events[idx]?.type || ''}
         currentStepNumber={idx}
         totalSteps={events.length}
       />
@@ -220,41 +179,13 @@ hello("World")`)
       {/* C) Visualization Panels */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 relative">
         <div className="space-y-4 relative">
-          <CodeDisplay
-            codeLines={snapshot.codeLines}
-            highlightedLines={snapshot.highlightedLines}
-            activeLineRef={codeLineRef}
-          />
-          <OutputPanel output={snapshot.output} />
+          <ConsolePane ref={consoleRef} />
         </div>
         <div className="space-y-4 relative">
-          <CallStackPanel callStack={snapshot.callStack} topFrameRef={topFrameRef} />
-          <ScopePanel
-            globalScope={snapshot.globalScope}
-            currentContext={{
-              ...snapshot.currentContext,
-              // adapt shape if needed
-            }}
-            capturedScope={snapshot.capturedScope || null}
-            closureSourceContextName={snapshot.closureSourceName}
-          />
+          <CallStackPanel ref={callStackRef} />
+          <GlobalScopePane ref={globalRef} />
           <Legend />
         </div>
-        {/* SVG Arrow overlay */}
-        {snapshot.highlightedLines.length > 0 && snapshot.callStack.length > 0 && (
-          <Xarrow
-            start={codeLineRef}
-            end={topFrameRef}
-            color="#facc15"
-            strokeWidth={3}
-            headSize={6}
-            zIndex={1000}
-            showHead={true}
-            showTail={false}
-            path="smooth"
-            curveness={0.5}
-          />
-        )}
       </div>
     </div>
   )

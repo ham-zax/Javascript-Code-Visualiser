@@ -103,7 +103,7 @@ try {
   modifiedSource = babel
     .transform(jsSourceCode, { // Use original jsSourceCode here
       filename: 'userCode.js', // Optional: Good practice for sourcemaps/errors
-      sourceMaps: false,      // Keep false for now unless you plan to use them
+      sourceMaps: true,      // Enable source maps
       plugins: [
         preserveLoc,                                 // 1) stash loc
         traceLoops,                                  // 2) timeout checks

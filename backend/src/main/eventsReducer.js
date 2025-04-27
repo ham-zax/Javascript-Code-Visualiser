@@ -183,7 +183,6 @@ const reduceEvents = (events) => {
     'ExitFunction',
     'Locals',
     'VarWrite',
-    'VarRead',
     'ConsoleLog',
     'ConsoleWarn',
     'ConsoleError',

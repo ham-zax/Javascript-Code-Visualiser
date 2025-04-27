@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const { launchWorker } = require('./launchWorker');
 const { reduceEvents } = require('./eventsReducer'); // Import reduceEvents
+const { storyReducer } = require('./storyReducer'); // Import Story reducer
 
 // Heroku provides a PORT env var that we have to use
 const port = process.env.PORT || 8080;
@@ -79,16 +80,17 @@ wss.on('connection', (ws, req) => { // Add req to log client IP if needed
           // Check if the worker is done
           if (evt.type === 'Done') {
             console.log(`Worker for ${clientIp} finished. Reducing events...`);
-            // Reduce the collected events
+            // Reduce the collected events to raw events and story events
             const reducedEvents = reduceEvents(session.events);
-            console.log(`Sending EVENT_LIST to ${clientIp} with ${reducedEvents.length} events.`);
-
-            // Send the single batch of reduced events
+            const storyEvents = storyReducer(reducedEvents);
+            console.log(`Sending STORY_LIST to ${clientIp} with ${storyEvents.length} events.`);
             if (ws.readyState === WebSocket.OPEN) {
               try {
+                ws.send(JSON.stringify({ type: 'STORY_LIST', payload: storyEvents }));
+                // Backward compatibility: also send old EVENT_LIST
                 ws.send(JSON.stringify({ type: 'EVENT_LIST', payload: reducedEvents }));
               } catch (sendError) {
-                console.error(`Error sending EVENT_LIST to ${clientIp}:`, sendError);
+                console.error(`Error sending events to ${clientIp}:`, sendError);
               }
             }
             session.worker = null; // Clear worker reference
