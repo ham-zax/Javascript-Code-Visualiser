@@ -2,7 +2,7 @@ const { parentPort, workerData } = require('worker_threads');
 const asyncHooks = require('async_hooks');
 const util = require('util');
 const fs = require('fs');
-const babel = require('babel-core');
+const babel = require('@babel/core'); // NOT 'babel-core'
 const { VM } = require('vm2');
 
 const fetch = require('node-fetch');
@@ -14,6 +14,7 @@ const { traceLoops } = require('./loopTracer');
 const traceLines = require('./traceLines');
 const traceScopeAndClosures = require('./traceScopeAndClosures');
 const traceFunctions = require('./traceFunctions'); // Require the new plugin
+const preserveLoc = require('./preserveLoc');
 
 const LOG_FILE = './log.txt';
 fs.writeFileSync(LOG_FILE, '');
@@ -43,7 +44,7 @@ const Events = {
 
   InitTimeout: (id, callbackName) => event('InitTimeout', { id, callbackName }),
   BeforeTimeout: (id) => event('BeforeTimeout', { id }),
-  
+
   // New events for enhanced tracing
   Step: (line, col, snippet) => event('Step', { line, col, snippet }),
   Locals: (locals) => event('Locals', { locals }),
@@ -144,6 +145,7 @@ const arrowFnImplicitReturnTypesRegex = /Literal|Identifier|(\w)*Expression/;
 // traceBlock function removed (was Falafel-specific)
 
 const jsSourceCode = workerData; // Keep the original source untouched
+console.log("[Worker] jsSourceCode before Babel:", typeof jsSourceCode, jsSourceCode ? jsSourceCode.slice(0, 50) + '...' : 'null/undefined'); // Log type and preview
 
 // Falafel transformation block removed
 
@@ -156,12 +158,11 @@ try {
       filename: 'userCode.js', // Optional: Good practice for sourcemaps/errors
       sourceMaps: false,      // Keep false for now unless you plan to use them
       plugins: [
-        // Order matters!
-        traceLoops,           // Handles loops first
-        // Pass original source needed by traceLines
-        [traceLines, { originalSource: jsSourceCode }],
-        traceScopeAndClosures,// Handles scope, closures, vars next // Re-enabled
-        traceFunctions,       // Wraps functions last <<-- CORRECTED ORDER // Re-enabled
+        preserveLoc,                               // 1) stash every original loc
+        traceLoops,                                // 2) loop‐tracing (optional order)
+        [traceLines, { originalSource: jsSourceCode }], // 3) line‐tracing (uses __origLoc if needed)
+        traceScopeAndClosures,                     // 4) var/closure tracing
+        traceFunctions                             // 5) wrap functions in try/catch/finally
       ]
     })
     .code;
@@ -201,13 +202,13 @@ const Tracer = {
   log: (...args) => postEvent(Events.ConsoleLog(arrToPrettyStr(args))),
   warn: (...args) => postEvent(Events.ConsoleWarn(arrToPrettyStr(args))),
   error: (...args) => postEvent(Events.ConsoleError(arrToPrettyStr(args))),
-  
+
   // New methods for line stepping
   step: (line, col, snippet) => postEvent({
     type: "Step",
     payload: { line, col, snippet }
   }),
-  
+
   // Methods for scope tracking
   _currentLocals: {},
   captureLocals: (locals) => {
@@ -217,18 +218,18 @@ const Tracer = {
       payload: locals
     });
   },
-  
+
   // Methods for variable tracking
   varWrite: (name, val) => postEvent({
     type: "VarWrite",
     payload: { name, val: prettyFormat(val) }
   }),
-  
+
   varRead: (name, val) => postEvent({
     type: "VarRead",
     payload: { name, val: prettyFormat(val) }
   }),
-  
+
   // Method for closure capture
   captureClosure: (fnId, bindings) => {
     const displayBindings = {};
@@ -240,7 +241,7 @@ const Tracer = {
       payload: { fnId, bindings: displayBindings }
     });
   },
-  
+
   // Loop termination check
   iterateLoop: () => {
     const hasTimedOut = (Date.now() - START_TIME) > TIMEOUT_MILLIS;
@@ -264,7 +265,7 @@ process.on('uncaughtException', (err) => {
 
 // Add safety check for Tracer methods if needed
 if (typeof Tracer.enterFunc !== 'function' || typeof Tracer.exitFunc !== 'function' || typeof Tracer.errorFunc !== 'function') {
-    throw new Error("Tracer object is missing required function tracing methods!");
+  throw new Error("Tracer object is missing required function tracing methods!");
 }
 
 const vm = new VM({
@@ -286,13 +287,13 @@ const vm = new VM({
 });
 
 try {
-    console.log("Running instrumented code in VM..."); // Add log
-    vm.run(modifiedSource);
-    console.log("VM execution finished."); // Add log
-} catch(vmError) {
-    console.error("Error during VM execution:", vmError); // Log VM errors caught here
-    // Post an error event if VM itself throws (e.g., timeout, compilation)
-    postEvent(Events.UncaughtError(vmError));
-    // Optionally re-throw or exit depending on desired worker behavior on VM errors
-    // process.exit(1);
+  console.log("Running instrumented code in VM..."); // Add log
+  vm.run(modifiedSource);
+  console.log("VM execution finished."); // Add log
+} catch (vmError) {
+  console.error("Error during VM execution:", vmError); // Log VM errors caught here
+  // Post an error event if VM itself throws (e.g., timeout, compilation)
+  postEvent(Events.UncaughtError(vmError));
+  // Optionally re-throw or exit depending on desired worker behavior on VM errors
+  // process.exit(1);
 }
