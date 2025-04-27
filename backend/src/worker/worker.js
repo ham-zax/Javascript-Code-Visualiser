@@ -8,7 +8,7 @@ const { VM } = require('vm2');
 const fetch = require('node-fetch');
 const _ = require('lodash');
 // Falafel removed
-const prettyFormat = require('pretty-format');
+const prettyFormat = require('pretty-format').default; // Import default export
 
 const { traceLoops } = require('./loopTracer');
 const traceLines = require('./traceLines');
@@ -78,62 +78,7 @@ const ignoredAsyncHookTypes = [
 ];
 const isIgnoredHookType = (type) => ignoredAsyncHookTypes.includes(type);
 
-const eid = asyncHooks.executionAsyncId();
-const tid = asyncHooks.triggerAsyncId();
-
-const asyncIdToResource = {};
-
-const init = (asyncId, type, triggerAsyncId, resource) => {
-  asyncIdToResource[asyncId] = resource;
-  if (type === 'PROMISE') {
-    postEvent(Events.InitPromise(asyncId, triggerAsyncId));
-  }
-  if (type === 'Timeout') {
-    const callbackName = resource._onTimeout.name || 'anonymous';
-    postEvent(Events.InitTimeout(asyncId, callbackName));
-  }
-  if (type === 'Microtask') {
-    postEvent(Events.InitMicrotask(asyncId, triggerAsyncId));
-  }
-}
-
-const before = (asyncId) => {
-  const resource = asyncIdToResource[asyncId] || {};
-  const resourceName = (resource.constructor).name;
-  if (resourceName === 'PromiseWrap') {
-    postEvent(Events.BeforePromise(asyncId));
-  }
-  if (resourceName === 'Timeout') {
-    postEvent(Events.BeforeTimeout(asyncId));
-  }
-  if (resourceName === 'AsyncResource') {
-    postEvent(Events.BeforeMicrotask(asyncId));
-  }
-}
-
-const after = (asyncId) => {
-  const resource = asyncIdToResource[asyncId] || {};
-  const resourceName = (resource.constructor).name;
-  if (resourceName === 'PromiseWrap') {
-    postEvent(Events.AfterPromise(asyncId));
-  }
-  if (resourceName === 'AsyncResource') {
-    postEvent(Events.AfterMicrotask(asyncId));
-  }
-}
-
-const destroy = (asyncId) => {
-  const resource = asyncIdToResource[asyncId] || {};
-}
-
-const promiseResolve = (asyncId) => {
-  const promise = asyncIdToResource[asyncId].promise;
-  postEvent(Events.ResolvePromise(asyncId));
-}
-
-asyncHooks
-  .createHook({ init, before, after, destroy, promiseResolve })
-  .enable();
+// --- async_hooks setup moved below Babel transform ---
 
 const functionDefinitionTypes = [
   'FunctionDeclaration',
@@ -180,6 +125,64 @@ try {
   }));
   process.exit(1);
 }
+
+// --- MOVE async_hooks setup HERE ---
+const asyncIdToResource = {}; // Keep resource map scoped if needed
+const init = (asyncId, type, triggerAsyncId, resource) => {
+  asyncIdToResource[asyncId] = resource;
+  if (type === 'PROMISE') {
+    postEvent(Events.InitPromise(asyncId, triggerAsyncId));
+  }
+  if (type === 'Timeout') {
+    const callbackName = resource._onTimeout.name || 'anonymous';
+    postEvent(Events.InitTimeout(asyncId, callbackName));
+  }
+  if (type === 'Microtask') {
+    postEvent(Events.InitMicrotask(asyncId, triggerAsyncId));
+  }
+};
+const before = (asyncId) => {
+  const resource = asyncIdToResource[asyncId] || {};
+  const resourceName = (resource.constructor).name;
+  if (resourceName === 'PromiseWrap') {
+    postEvent(Events.BeforePromise(asyncId));
+  }
+  if (resourceName === 'Timeout') {
+    postEvent(Events.BeforeTimeout(asyncId));
+  }
+  if (resourceName === 'AsyncResource') {
+    postEvent(Events.BeforeMicrotask(asyncId));
+  }
+};
+const after = (asyncId) => {
+  const resource = asyncIdToResource[asyncId] || {};
+  const resourceName = (resource.constructor).name;
+  if (resourceName === 'PromiseWrap') {
+    postEvent(Events.AfterPromise(asyncId));
+  }
+  if (resourceName === 'AsyncResource') {
+    postEvent(Events.AfterMicrotask(asyncId));
+  }
+};
+const destroy = (asyncId) => {
+  // Optional: Clean up asyncIdToResource if needed, be careful with timing
+  // delete asyncIdToResource[asyncId];
+};
+const promiseResolve = (asyncId) => {
+    // Add safety check inside the hook
+    const resource = asyncIdToResource[asyncId];
+    // Only post event if resource and promise exist
+    if (resource && resource.promise) {
+         postEvent(Events.ResolvePromise(asyncId));
+    }
+    // No else block, so no warning is printed
+};
+
+console.log("[Worker] Enabling async_hooks.");
+asyncHooks
+  .createHook({ init, before, after, destroy, promiseResolve })
+  .enable();
+// --- End async_hooks setup move ---
 
 // TODO: Maybe change this name to avoid conflicts?
 const nextId = (() => {
@@ -278,6 +281,7 @@ const vm = new VM({
     lodash: _,
     setTimeout,
     queueMicrotask,
+    prettyFormat, // <<< ADD prettyFormat TO SANDBOX
     console: {
       log: Tracer.log,
       warn: Tracer.warn,
@@ -294,6 +298,6 @@ try {
   console.error("Error during VM execution:", vmError); // Log VM errors caught here
   // Post an error event if VM itself throws (e.g., timeout, compilation)
   postEvent(Events.UncaughtError(vmError));
-  // Optionally re-throw or exit depending on desired worker behavior on VM errors
-  // process.exit(1);
+// Optionally re-throw or exit depending on desired worker behavior on VM errors
+// process.exit(1);
 }
