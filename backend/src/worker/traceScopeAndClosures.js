@@ -2,6 +2,8 @@
 module.exports = function traceScopeAndClosures({ types: t }) {
   // unique marker so we never collide with real AST props
   const ALREADY = Symbol("scopeClosureInstrumented");
+  // Shared set of names to skip for VarRead/VarWrite
+  const SKIP_NAMES = new Set(['Tracer', 'nextId', 'console', '_', 'lodash', 'fetch']);
 
   return {
     visitor: {
@@ -60,6 +62,9 @@ module.exports = function traceScopeAndClosures({ types: t }) {
         // Now capture the closure: find free vars
         const bound = new Set(uniqueNames.concat(path.node.id ? [path.node.id.name] : []));
         const free = new Set();
+        // Define internal names here to use in the filter below
+        const internalNames = new Set(['Tracer', 'nextId', 'console', '_', 'lodash', 'fetch']);
+
         path.traverse({
           Identifier(idPath) {
             const name = idPath.node.name;
@@ -75,19 +80,32 @@ module.exports = function traceScopeAndClosures({ types: t }) {
           Function(inner) { inner.skip(); }
         });
 
-        const closureProps = Array.from(free).map(name =>
+        // Filter out internal names from the free variables before creating properties
+        const userFreeVars = Array.from(free).filter(name => !internalNames.has(name));
+
+        const closureProps = userFreeVars.map(name => // Use filtered list
           t.objectProperty(t.identifier(name), t.identifier(name), false, true)
         );
+
         if (closureProps.length > 0) {
           const captureClosure = t.expressionStatement(
             t.callExpression(
               t.memberExpression(t.identifier("Tracer"), t.identifier("captureClosure")),
+              // Pass the fnId (defined earlier in the visitor)
               [ fnId, t.objectExpression(closureProps) ]
             )
           );
-          captureClosure[ALREADY] = true;
+          captureClosure[ALREADY] = true; // Use the correct ALREADY symbol
           // insert the closure‐capture *after* the function declaration/expression
-          path.insertAfter(captureClosure);
+          // Be careful with insertion point relative to other plugins
+          const statementParent = path.getStatementParent();
+          if (statementParent) {
+             statementParent.insertAfter(captureClosure);
+          } else {
+             // Fallback for expressions? May need adjustment. Consider if this case is valid.
+             console.warn("traceScopeAndClosures: Could not find statement parent for closure capture insertion.", path.node);
+             path.insertAfter(captureClosure); // Attempt fallback insertion
+          }
         }
 
         // Finally, skip into children so we don't re‐instrument what we just did
@@ -98,10 +116,17 @@ module.exports = function traceScopeAndClosures({ types: t }) {
         // guard against double‐instrumentation
         if (path.node[ALREADY]) return;
 
-        // only handle simple `x = ...` or `this.x = ...`
+        // only handle simple `x = ...`
         const left = path.node.left;
         if (t.isIdentifier(left)) {
           const name = left.name;
+
+          // *** FILTER CHECK for VarWrite ***
+          if (SKIP_NAMES.has(name)) {
+            return; // Don't instrument writes to internal/global objects
+          }
+          // *** END FILTER CHECK ***
+
           const writeCall = t.expressionStatement(
             t.callExpression(
               t.memberExpression(t.identifier("Tracer"), t.identifier("varWrite")),
@@ -116,6 +141,8 @@ module.exports = function traceScopeAndClosures({ types: t }) {
 
       // if you do VarRead, do something similar on Identifier visitor
       Identifier(path) {
+        // Use the shared SKIP_NAMES set defined above
+
         if (path.node[ALREADY]) return;
         // e.g. skip if you're in left side of an assignment
         if (path.parent.type === "AssignmentExpression"
@@ -124,6 +151,12 @@ module.exports = function traceScopeAndClosures({ types: t }) {
         // only instrument reads in expression contexts
         if (path.isReferencedIdentifier()) {
           const name = path.node.name;
+
+          // Skip instrumentation for reads of specified names using the shared set
+          if (SKIP_NAMES.has(name)) {
+            return;
+          }
+
           const readCall = t.expressionStatement(
             t.callExpression(
               t.memberExpression(t.identifier("Tracer"), t.identifier("varRead")),
@@ -131,7 +164,15 @@ module.exports = function traceScopeAndClosures({ types: t }) {
             )
           );
           readCall[ALREADY] = true;
-          path.insertAfter(readCall);
+          // Insert before the statement containing the read for better logical flow
+          const statementPath = path.getStatementParent();
+          if (statementPath && !statementPath.node[ALREADY]) {
+            statementPath.insertBefore(readCall);
+            statementPath.node[ALREADY] = true;
+          } else {
+            // Fallback: insert after the identifier if statement parent is not found
+            path.insertAfter(readCall);
+          }
           path.skip();
         }
       }

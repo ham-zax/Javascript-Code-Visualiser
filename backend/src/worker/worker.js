@@ -7,12 +7,13 @@ const { VM } = require('vm2');
 
 const fetch = require('node-fetch');
 const _ = require('lodash');
-const falafel = require('falafel');
+// Falafel removed
 const prettyFormat = require('pretty-format');
 
 const { traceLoops } = require('./loopTracer');
 const traceLines = require('./traceLines');
 const traceScopeAndClosures = require('./traceScopeAndClosures');
+const traceFunctions = require('./traceFunctions'); // Require the new plugin
 
 const LOG_FILE = './log.txt';
 fs.writeFileSync(LOG_FILE, '');
@@ -140,78 +141,44 @@ const functionDefinitionTypes = [
 ];
 const arrowFnImplicitReturnTypesRegex = /Literal|Identifier|(\w)*Expression/;
 
-// Inspired by: http://alltom.com/pages/instrumenting-javascript/
-const traceBlock = (code, fnName, start, end) => `{
-  const idWithExtensionToAvoidConflicts = nextId();
-  Tracer.enterFunc(idWithExtensionToAvoidConflicts, '${fnName}', ${start}, ${end});
-  try {
-    ${code}
-  } catch (e) {
-    Tracer.errorFunc(e.message, idWithExtensionToAvoidConflicts, '${fnName}', ${start}, ${end});
-    throw e;
-  } finally {
-    Tracer.exitFunc(idWithExtensionToAvoidConflicts, '${fnName}', ${start}, ${end});
-  }
-}`
+// traceBlock function removed (was Falafel-specific)
 
-const jsSourceCode = workerData;
+const jsSourceCode = workerData; // Keep the original source untouched
 
-// TODO: Convert all this to babel transform(s)
-// TODO: HANDLE GENERATORS/ASYNC-AWAIT
-const output = falafel(jsSourceCode, (node) => {
+// Falafel transformation block removed
 
-  const parentType = node.parent && node.parent.type;
-  const isBlockStatement = node.type === 'BlockStatement';
-  const isFunctionBody = functionDefinitionTypes.includes(parentType);
-  const isArrowFnReturnType = arrowFnImplicitReturnTypesRegex.test(node.type);
-  const isArrowFunctionBody = parentType === 'ArrowFunctionExpression';
-  const isArrowFn = node.type === 'ArrowFunctionExpression';
-
-  if (isBlockStatement && isFunctionBody) {
-    const { start, end } = node.parent;
-    const fnName = (node.parent.id && node.parent.id.name) || 'anonymous';
-    const block = node.source();
-    const blockWithoutCurlies = block.substring(1, block.length - 1);
-    node.update(traceBlock(blockWithoutCurlies, fnName, start, end))
-  }
-  else if (isArrowFnReturnType && isArrowFunctionBody) {
-    const { start, end, params } = node.parent;
-
-    const isParamIdentifier = params.some(param => param === node);
-
-    if (!isParamIdentifier) {
-      const fnName = (node.parent.id && node.parent.id.name) || 'anonymous';
-      const block = node.source();
-      const returnedBlock = `return (${block});`;
-      node.update(traceBlock(returnedBlock, fnName, start, end))
-    }
-  }
-  else if (isArrowFn) {
-    const body = node.source();
-    const firstCurly = body.indexOf('{');
-    const lastCurly = body.lastIndexOf('}');
-    const bodyHasCurlies = firstCurly !== -1 && lastCurly !== -1;
-
-    // We already updated all arrow function bodies to have curlies, so here
-    // we can assume if a body looks like `({ ... })`, then we need to remove
-    // the parenthesis.
-    if (bodyHasCurlies) {
-      const parensNeedStripped = body[firstCurly - 1] === '(';
-      if (parensNeedStripped) {
-        const bodyBlock = body.substring(firstCurly, lastCurly + 1);
-        const bodyWithoutParens = `() => ${bodyBlock}`;
-        node.update(bodyWithoutParens);
-      }
-    }
-  }
-
-});
-
-const modifiedSource = babel
-  .transform(output.toString(), { 
-    plugins: [traceLoops, traceLines, traceScopeAndClosures] 
-  })
-  .code;
+// --- Run Babel ---
+let modifiedSource = '';
+try {
+  console.log("Starting Babel transformation..."); // Add log
+  modifiedSource = babel
+    .transform(jsSourceCode, { // Use original jsSourceCode here
+      filename: 'userCode.js', // Optional: Good practice for sourcemaps/errors
+      sourceMaps: false,      // Keep false for now unless you plan to use them
+      plugins: [
+        // Order matters!
+        traceLoops,           // Handles loops first
+        // Pass original source needed by traceLines
+        [traceLines, { originalSource: jsSourceCode }],
+        // traceScopeAndClosures,// Handles scope, closures, vars next
+        traceFunctions,       // Wraps functions last <<-- CORRECTED ORDER
+      ]
+    })
+    .code;
+  console.log("Babel transformation complete."); // Add log
+  // Optional: Log transformed code for debugging
+  log('--- Transformed Code ---');
+  log(modifiedSource); // <--- UNCOMMENTED THIS
+  log('--- End Transformed Code ---');
+} catch (babelError) {
+  console.error("Error during Babel transformation:", babelError); // Keep existing error handling
+  postEvent(Events.UncaughtError({
+    name: 'InstrumentationError',
+    message: `Babel Transformation Error: ${babelError.message}`,
+    stack: babelError.stack
+  }));
+  process.exit(1);
+}
 
 // TODO: Maybe change this name to avoid conflicts?
 const nextId = (() => {
@@ -264,12 +231,10 @@ const Tracer = {
   
   // Method for closure capture
   captureClosure: (fnId, bindings) => {
-    // Convert bindings values to a more displayable format
     const displayBindings = {};
     for (const key in bindings) {
       displayBindings[key] = prettyFormat(bindings[key]);
     }
-    
     postEvent({
       type: "Closure",
       payload: { fnId, bindings: displayBindings }
@@ -297,8 +262,13 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
+// Add safety check for Tracer methods if needed
+if (typeof Tracer.enterFunc !== 'function' || typeof Tracer.exitFunc !== 'function' || typeof Tracer.errorFunc !== 'function') {
+    throw new Error("Tracer object is missing required function tracing methods!");
+}
+
 const vm = new VM({
-  timeout: 6000,
+  timeout: 6000, // Keep existing timeout
   sandbox: {
     nextId,
     Tracer,
@@ -315,4 +285,14 @@ const vm = new VM({
   },
 });
 
-vm.run(modifiedSource);
+try {
+    console.log("Running instrumented code in VM..."); // Add log
+    vm.run(modifiedSource);
+    console.log("VM execution finished."); // Add log
+} catch(vmError) {
+    console.error("Error during VM execution:", vmError); // Log VM errors caught here
+    // Post an error event if VM itself throws (e.g., timeout, compilation)
+    postEvent(Events.UncaughtError(vmError));
+    // Optionally re-throw or exit depending on desired worker behavior on VM errors
+    // process.exit(1);
+}

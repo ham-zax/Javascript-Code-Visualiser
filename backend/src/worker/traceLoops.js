@@ -1,3 +1,4 @@
+// backend/src/worker/loopTracer.js (Revised)
 const traceLoops = (babel) => {
   const t = babel.types;
   // Use a symbol specific to this plugin or reuse a shared one if appropriate
