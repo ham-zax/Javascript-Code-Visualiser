@@ -160,8 +160,8 @@ try {
         traceLoops,           // Handles loops first
         // Pass original source needed by traceLines
         [traceLines, { originalSource: jsSourceCode }],
-        // traceScopeAndClosures,// Handles scope, closures, vars next
-        traceFunctions,       // Wraps functions last <<-- CORRECTED ORDER
+        traceScopeAndClosures,// Handles scope, closures, vars next // Re-enabled
+        traceFunctions,       // Wraps functions last <<-- CORRECTED ORDER // Re-enabled
       ]
     })
     .code;

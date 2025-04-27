@@ -126,6 +126,11 @@ module.exports = function traceFunctions({ types: t }) {
         // Add logs before and after critical steps like replaceWith
         try {
             console.log(`[traceFunctions] Replacing body for: ${fnName}`); // Use determined fnName
+
+            // --- Attempt to copy location info ---
+            t.inherits(newBody, functionBodyPath.node); // Use Babel's inheritance helper
+            // --- End loc copy attempt ---
+
             functionBodyPath.replaceWith(newBody); // newBody is the BlockStatement with try/catch etc.
             console.log(`[traceFunctions] Body replaced successfully for: ${fnName}`);
 

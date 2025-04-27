@@ -2,8 +2,14 @@
 module.exports = function traceScopeAndClosures({ types: t }) {
   // unique marker so we never collide with real AST props
   const ALREADY = Symbol("scopeClosureInstrumented");
-  // Shared set of names to skip for VarRead/VarWrite
-  const SKIP_NAMES = new Set(['Tracer', 'nextId', 'console', '_', 'lodash', 'fetch']);
+  // EXPANDED SKIP_NAMES
+  const SKIP_NAMES = new Set([ // Keep existing + add _traceId, _temp
+      'Tracer', 'nextId', 'console',
+      '_', 'lodash', 'fetch',
+      '_traceId', '_temp', '_this', '_ref' // Added internal/temp vars
+  ]);
+  // Maybe a separate symbol for VarRead added?
+  const VAR_READ_ADDED = Symbol("varReadAdded"); // Add symbol for VarRead
 
   return {
     visitor: {
@@ -16,7 +22,7 @@ module.exports = function traceScopeAndClosures({ types: t }) {
 
         // Generate a stable ID for this function (for closure tracking)
         const fnId = t.callExpression(t.identifier("nextId"), []);
-        
+
         // Collect parameter names
         const params = path.node.params
           .filter(p => t.isIdentifier(p))
@@ -62,8 +68,8 @@ module.exports = function traceScopeAndClosures({ types: t }) {
         // Now capture the closure: find free vars
         const bound = new Set(uniqueNames.concat(path.node.id ? [path.node.id.name] : []));
         const free = new Set();
-        // Define internal names here to use in the filter below
-        const internalNames = new Set(['Tracer', 'nextId', 'console', '_', 'lodash', 'fetch']);
+        // internalNames is now defined globally as SKIP_NAMES
+        // Removed duplicate 'bound' and 'free' declarations
 
         path.traverse({
           Identifier(idPath) {
@@ -81,7 +87,7 @@ module.exports = function traceScopeAndClosures({ types: t }) {
         });
 
         // Filter out internal names from the free variables before creating properties
-        const userFreeVars = Array.from(free).filter(name => !internalNames.has(name));
+        const userFreeVars = Array.from(free).filter(name => !SKIP_NAMES.has(name)); // Ensure using SKIP_NAMES
 
         const closureProps = userFreeVars.map(name => // Use filtered list
           t.objectProperty(t.identifier(name), t.identifier(name), false, true)
@@ -109,7 +115,7 @@ module.exports = function traceScopeAndClosures({ types: t }) {
         }
 
         // Finally, skip into children so we don't re‐instrument what we just did
-        path.skip();
+        // path.skip(); // Keep removed
       },
 
       AssignmentExpression(path) {
@@ -134,46 +140,89 @@ module.exports = function traceScopeAndClosures({ types: t }) {
             )
           );
           writeCall[ALREADY] = true;
-          path.insertAfter(writeCall);
-          path.skip();
+          // Remove path.skip(); from the END of this visitor block if present
+          // path.skip(); // Keep removed
         }
       },
 
-      // if you do VarRead, do something similar on Identifier visitor
       Identifier(path) {
-        // Use the shared SKIP_NAMES set defined above
+        // --- Prevent Recursion ---
+        // 1. Skip if node is already marked by *this* plugin for read tracing
+        if (path.node[VAR_READ_ADDED]) return;
+        // 2. Skip if node is marked by *any* plugin as already processed/generated
+        //    (Requires consistent use of a shared 'ALREADY' symbol across plugins)
+        if (path.node[ALREADY]) return; // Check shared 'ALREADY' symbol
 
-        if (path.node[ALREADY]) return;
-        // e.g. skip if you're in left side of an assignment
-        if (path.parent.type === "AssignmentExpression"
-         && path.parent.left === path.node
-        ) return;
-        // only instrument reads in expression contexts
+        // 3. Skip if inside a MemberExpression whose object is Tracer (e.g., Tracer.varRead)
+        if (path.parentPath.isMemberExpression() &&
+            path.parentPath.get('object').isIdentifier({name: 'Tracer'})) {
+            // This identifier is 'varRead', 'enterFunc', etc.
+            return;
+        }
+        // 4. Skip if inside a CallExpression whose callee's object is Tracer
+        //    (This handles identifiers used *as arguments* to Tracer.* calls)
+        if (path.parentPath.isCallExpression() &&
+            path.parentPath.get('callee').isMemberExpression() &&
+            path.parentPath.get('callee').get('object').isIdentifier({name: 'Tracer'})) {
+            // We want to prevent infinite loops, but maybe we DO want to trace reads
+            // of variables *passed* to Tracer, just not the Tracer object itself.
+            // Let's keep this check simple for now: skip all args within Tracer.* calls
+            return;
+        }
+        // --- End Recursion Prevention ---
+
+        // Skip assignment left-hand side
+        if (path.parent.type === "AssignmentExpression" && path.parent.left === path.node) return;
+
+        // Only instrument referenced identifiers
         if (path.isReferencedIdentifier()) {
           const name = path.node.name;
 
-          // Skip instrumentation for reads of specified names using the shared set
-          if (SKIP_NAMES.has(name)) {
-            return;
+          // Filter known internal/global names
+          if (SKIP_NAMES.has(name)) return;
+
+          // Filter arguments to console.*
+          const parentConsoleCall = path.findParent((p) =>
+             p.isCallExpression() &&
+             p.get('callee').isMemberExpression() &&
+             p.get('callee').get('object').isIdentifier({ name: 'console' })
+          );
+          if (parentConsoleCall) {
+              console.log(`[traceScope] Skipping VarRead for arg to console call: ${name}`);
+              return;
           }
 
+          // Create the VarRead call AST node
           const readCall = t.expressionStatement(
             t.callExpression(
               t.memberExpression(t.identifier("Tracer"), t.identifier("varRead")),
-              [ t.stringLiteral(name), path.node ]
+              [ t.stringLiteral(name), path.node ] // Pass original identifier node as value read
             )
           );
+          // Mark the generated statement itself with the shared symbol if possible
           readCall[ALREADY] = true;
-          // Insert before the statement containing the read for better logical flow
-          const statementPath = path.getStatementParent();
-          if (statementPath && !statementPath.node[ALREADY]) {
-            statementPath.insertBefore(readCall);
-            statementPath.node[ALREADY] = true;
-          } else {
-            // Fallback: insert after the identifier if statement parent is not found
-            path.insertAfter(readCall);
+
+          // Attempt Insertion
+          try {
+            // Mark the *original identifier* node *before* inserting
+            path.node[VAR_READ_ADDED] = true;
+            // Insert the new statement *after* the original identifier's statement parent
+            const statementParent = path.getStatementParent();
+            if (statementParent) {
+                 console.log(`[traceScope] Inserting VarRead for "${name}" after statement L${statementParent.node.loc?.start.line}`);
+                 statementParent.insertAfter(readCall);
+            } else {
+                 console.warn(`[traceScope] No statement parent for VarRead of "${name}", inserting after path.`);
+                 path.insertAfter(readCall); // Fallback
+            }
+          } catch(e) {
+            console.error(`[traceScope] Error inserting VarRead after identifier ${name}`, e);
+            // If insertion fails, maybe unmark the node?
+            // delete path.node[VAR_READ_ADDED];
           }
-          path.skip();
+
+          // Do NOT skip traversal
+          // path.skip();
         }
       }
     }
