@@ -2,12 +2,14 @@
 import { forwardRef, useState, useImperativeHandle } from 'react';
 
 export interface CallStackPaneHandle {
-  // Add locals parameter to pushFrame
-  pushFrame(funcName: string, args: any[], locals: Record<string, any>): void;
+  // Use functionName consistently
+  pushFrame(functionName: string, args: any[], locals: Record<string, any>): void;
   popFrame(): void;
   reset(): void;
+  // Keep updateLocals by ID if needed elsewhere, though App.tsx won't use it directly
   updateLocals(frameId: string, locals: Record<string, any>): void;
-  // Add method to get current frames
+  // Add method to update the *current* frame's locals
+  updateCurrentFrameLocals(locals: Record<string, any>): void;
   getFrames(): Frame[];
 }
 
@@ -19,10 +21,11 @@ export const CallStackPanel = forwardRef<CallStackPaneHandle, {}>((_, ref) => {
   const initialFrames: Frame[] = [{ id: 'global', functionName: '(global)', args: [], locals: {} }];
   const [frames, setFrames] = useState<Frame[]>(initialFrames);
 
+
   useImperativeHandle(ref, () => ({
-    // Accept and store initial locals (parameters)
-    pushFrame(funcName, args, locals) {
-      setFrames(prev => [...prev, { id: `${funcName}-${prev.length}`, functionName: funcName, args, locals: locals || {} }]);
+    // Use functionName consistently
+    pushFrame(functionName, args, locals) {
+      setFrames(prev => [...prev, { id: `${functionName}-${prev.length}`, functionName: functionName, args, locals: locals || {} }]);
     },
     popFrame() {
       // Keep the global frame
@@ -34,11 +37,22 @@ export const CallStackPanel = forwardRef<CallStackPaneHandle, {}>((_, ref) => {
     updateLocals(frameId, locals) {
       setFrames(prev => prev.map(f => f.id === frameId ? { ...f, locals } : f));
     },
-    // Implement getFrames
+    // Implement updateCurrentFrameLocals
+    updateCurrentFrameLocals(locals) {
+      setFrames(prev => {
+        if (prev.length <= 1) return prev; // Don't update global frame this way
+        const updatedFrames = [...prev];
+        updatedFrames[updatedFrames.length - 1] = {
+          ...updatedFrames[updatedFrames.length - 1],
+          locals
+        };
+        return updatedFrames;
+      });
+    },
     getFrames() {
       return frames;
     }
-  }), [frames]); // Add frames to dependency array
+  }), [frames]);
 
   return (
     <div className="bg-white p-4 rounded-md shadow">
