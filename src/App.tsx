@@ -29,6 +29,7 @@ type DisplayScopeInfo = {
 import CodeEditor from "./components/CodeEditor";
 import ExecutionControls from "./components/ExecutionControls";
 import VisualizationState from "./components/VisualizationState";
+import { ConsolePane } from "./components/ConsolePane";
 // import ExplanationOutput from "./components/ExplanationOutput";
 // import SettingsPanel from "./components/SettingsPanel";
 // import { examples } from "./lib/codeExamples";
@@ -188,7 +189,18 @@ function deriveConsoleOutput(events: TraceEvent[], idx: number): string[] {
 }
 
 /** Derive highlighted source line */
-function deriveHighlightedLine(events: TraceEvent[], idx: number): number | null {
+/**
+ * Derives the next and previous highlighted lines for dual highlighting.
+ * @returns { nextLine: number | null, prevLine: number | null }
+ */
+function deriveHighlightedLine(
+  events: any[], // TraceEvent[]
+  idx: number
+): { nextLine: number | null; prevLine: number | null } {
+  let nextLine: number | null = null;
+  let prevLine: number | null = null;
+
+  // Next line logic
   if (
     idx >= 0 &&
     idx < events.length &&
@@ -196,18 +208,76 @@ function deriveHighlightedLine(events: TraceEvent[], idx: number): number | null
   ) {
     const payload = events[idx].payload as { line?: number };
     if (typeof payload.line === "number") {
-      return payload.line;
+      nextLine = payload.line;
     }
-  }
-  for (let i = idx - 1; i >= 0; i--) {
-    if (events[i].type === "STEP_LINE") {
-      const payload = events[i].payload as { line?: number };
-      if (typeof payload.line === "number") {
-        return payload.line;
+  } else if (idx >= 0 && idx < events.length) {
+    // Not a STEP_LINE, try to look ahead for the next STEP_LINE
+    for (let i = idx + 1; i < events.length; i++) {
+      if (events[i].type === "STEP_LINE") {
+        const payload = events[i].payload as { line?: number };
+        if (typeof payload.line === "number") {
+          nextLine = payload.line;
+          break;
+        }
       }
     }
   }
-  return null;
+
+  // Previous line logic
+  if (idx > 0) {
+    const prevEvent = events[idx - 1];
+    if (prevEvent.type === "STEP_LINE") {
+      const payload = prevEvent.payload as { line?: number };
+      if (typeof payload.line === "number") {
+        prevLine = payload.line;
+      }
+    } else if (prevEvent.type === "CALL") {
+      const payload = prevEvent.payload as { callSiteLine?: number };
+      if (typeof payload.callSiteLine === "number") {
+        prevLine = payload.callSiteLine;
+      } else {
+        // fallback: last STEP_LINE before CALL
+        for (let i = idx - 2; i >= 0; i--) {
+          if (events[i].type === "STEP_LINE") {
+            const p = events[i].payload as { line?: number };
+            if (typeof p.line === "number") {
+              prevLine = p.line;
+              break;
+            }
+          }
+        }
+      }
+    } else if (prevEvent.type === "RETURN") {
+      const payload = prevEvent.payload as { returnLine?: number };
+      if (typeof payload.returnLine === "number") {
+        prevLine = payload.returnLine;
+      } else {
+        // fallback: last STEP_LINE within the returned function
+        for (let i = idx - 2; i >= 0; i--) {
+          if (events[i].type === "STEP_LINE") {
+            const p = events[i].payload as { line?: number };
+            if (typeof p.line === "number") {
+              prevLine = p.line;
+              break;
+            }
+          }
+        }
+      }
+    } else {
+      // fallback: last STEP_LINE before idx
+      for (let i = idx - 1; i >= 0; i--) {
+        if (events[i].type === "STEP_LINE") {
+          const p = events[i].payload as { line?: number };
+          if (typeof p.line === "number") {
+            prevLine = p.line;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return { nextLine, prevLine };
 }
 
 const DEFAULT_CODE = `function greet(name) {
@@ -228,6 +298,7 @@ function App() {
   const derivedExplanation = useMemo(() => deriveExplanation(events, idx), [events, idx]);
   const derivedConsole = useMemo(() => deriveConsoleOutput(events, idx), [events, idx]);
   const derivedHighlightLine = useMemo(() => deriveHighlightedLine(events, idx), [events, idx]);
+  // NOTE: derivedHighlightLine is now { nextLine, prevLine }
 
   // WebSocket logic
   const { setEvents, replayTo, setIdx, isPlaying, speed } = usePlaybackStore();
@@ -289,7 +360,7 @@ function App() {
       <header className="bg-white shadow-sm p-4 border-b">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <h1 className="text-xl font-semibold text-gray-800">
-            JS Visualizer (New Layout)
+            JS Visualizer
           </h1>
           <div className="flex gap-2 items-center">
             <Button
@@ -337,13 +408,15 @@ function App() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
           {/* Col 1: Code & Controls */}
           <div className="space-y-6">
-            <CodeEditor code={currentCode} highlightedLine={derivedHighlightLine} onChange={setCurrentCode} />
+            {/* Pass both nextLine and prevLine for dual highlighting */}
+            <CodeEditor code={currentCode} highlightInfo={derivedHighlightLine} onChange={setCurrentCode} />
             <ExecutionControls />
           </div>
 
           {/* Col 2: Visualization & Explanation */}
           <div className="space-y-6">
             <VisualizationState callStack={derivedCallStack} scopes={derivedScopes} />
+            <ConsolePane lines={derivedConsole} />
             {/* <ExplanationOutput explanation={derivedExplanation} consoleOutput={derivedConsole} /> */}
           </div>
         </div>

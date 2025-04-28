@@ -4,13 +4,23 @@ import * as monaco from "monaco-editor";
 import Editor, { OnMount } from "@monaco-editor/react";
 import { Card } from "@/components/ui/card";
 
+/**
+ * Props for CodeEditor supporting dual line highlighting.
+ * highlightInfo: { nextLine, prevLine } for execution visualization.
+ */
 export interface CodeEditorProps {
   code: string;
-  highlightedLine: number | null;
+  highlightInfo: {
+    nextLine: number | null;
+    prevLine: number | null;
+  };
   onChange?: (value: string) => void;
 }
 
-export default function CodeEditor({ code, highlightedLine, onChange }: CodeEditorProps) {
+/**
+ * CodeEditor component with dual line highlighting for execution visualization.
+ */
+export default function CodeEditor({ code, highlightInfo, onChange }: CodeEditorProps) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const decorationIdsRef = useRef<string[]>([]);
 
@@ -22,8 +32,16 @@ export default function CodeEditor({ code, highlightedLine, onChange }: CodeEdit
       editor.setValue(code);
     }
     // Set initial highlight if present
-    if (highlightedLine && highlightedLine > 0) {
-      setHighlight([highlightedLine]);
+    // Set initial highlights if present
+    const highlights = [];
+    if (highlightInfo.prevLine && highlightInfo.prevLine > 0) {
+      highlights.push({ line: highlightInfo.prevLine, type: "previous" as const });
+    }
+    if (highlightInfo.nextLine && highlightInfo.nextLine > 0) {
+      highlights.push({ line: highlightInfo.nextLine, type: "next" as const });
+    }
+    if (highlights.length > 0) {
+      setHighlight(highlights);
     }
   };
 
@@ -34,25 +52,41 @@ export default function CodeEditor({ code, highlightedLine, onChange }: CodeEdit
     }
   }, [code]);
 
-  // Update highlight when highlightedLine changes
+  // Update highlights when highlightInfo changes
   useEffect(() => {
     if (editorRef.current) {
-      if (highlightedLine && highlightedLine > 0) {
-        setHighlight([highlightedLine]);
+      const highlights = [];
+      if (highlightInfo.prevLine && highlightInfo.prevLine > 0) {
+        highlights.push({ line: highlightInfo.prevLine, type: "previous" as const });
+      }
+      if (highlightInfo.nextLine && highlightInfo.nextLine > 0) {
+        highlights.push({ line: highlightInfo.nextLine, type: "next" as const });
+      }
+      if (highlights.length > 0) {
+        setHighlight(highlights);
       } else {
         clearHighlight();
       }
     }
     // eslint-disable-next-line
-  }, [highlightedLine]);
+  }, [highlightInfo.prevLine, highlightInfo.nextLine]);
 
-  function setHighlight(lines: number[]) {
+  /**
+   * Set highlights for given lines and types.
+   * @param highlights Array of { line, type } objects.
+   */
+  function setHighlight(
+    highlights: { line: number; type: "next" | "previous" }[]
+  ) {
     if (!editorRef.current) return;
-    const decorations = lines.map((line) => ({
+    const decorations = highlights.map(({ line, type }) => ({
       range: new monaco.Range(line, 1, line, 1),
       options: {
         isWholeLine: true,
-        className: "highlight-current",
+        className:
+          type === "next"
+            ? "highlight-next-step"
+            : "highlight-last-executed",
       },
     }));
     decorationIdsRef.current = editorRef.current.deltaDecorations(
@@ -74,7 +108,7 @@ export default function CodeEditor({ code, highlightedLine, onChange }: CodeEdit
       <Editor
         height="400px"
         defaultLanguage="javascript"
-        theme="vs-dark"
+        theme="vs-light"
         value={code}
         options={{
           readOnly: false,

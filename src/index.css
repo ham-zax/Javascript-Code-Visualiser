@@ -138,3 +138,40 @@ display: block;
   width: 100%;
   display: block;
 }
+/*
+ * Dual code highlighting for Monaco Editor:
+ * .highlight-next-step: highlights the next step to execute (bright lime-yellow, strong contrast for white text on black)
+ * .highlight-last-executed: highlights the last executed line (bright cyan, strong contrast for white text on black)
+
+ 
+ */
+
+.highlight-next-step {
+  background-color: #ffe066 !important; /* Gold, visible on light backgrounds */
+  color: #222 !important;
+  width: 100%;
+  display: block;
+}
+
+.highlight-last-executed {
+  background-color: #90e0ef !important; /* Light blue, visible on light backgrounds */
+  color: #222 !important;
+  width: 100%;
+  display: block;
+}
+
+.dark .highlight-next-step {
+  background-color: rgba(200, 255, 0, 0.92) !important;
+  color: #222 !important;
+}
+
+.dark .highlight-last-executed {
+  background-color: rgba(0, 255, 255, 0.92) !important;
+  color: #fff !important;
+}
+
+/* Subtle class for improved contrast with white text */
+.subtle {
+  background: #222 !important;
+  color: #fff !important;
+}
