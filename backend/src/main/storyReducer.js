@@ -1,93 +1,160 @@
 // Transforms raw pipeline events into high-level story events per EVENT_SCHEMA.md
 function storyReducer(rawEvents) {
   const story = [];
-  let globals = {}; // Track global scope state
+  const activeScopes = {}; // scopeId -> scope object
+  const scopeStack = ['global'];
+  let nextScopeIdCounter = 0;
+
+  // Helper to deep clone variables for snapshotting
+  function cloneVars(vars) {
+    const out = {};
+    for (const [k, v] of Object.entries(vars)) {
+      out[k] = { ...v };
+    }
+    return out;
+  }
+
+  // Helper to build scopes snapshot for STEP_LINE
+  function buildScopesSnapshot() {
+    // Only include scopes currently on the stack (visible)
+    return scopeStack
+      .map(scopeId => {
+        const s = activeScopes[scopeId];
+        if (!s) return null;
+        return {
+          scopeId: s.scopeId,
+          type: s.type,
+          name: s.name,
+          variables: cloneVars(s.variables),
+          parentId: s.parentId,
+          isPersistent: !!s.isPersistent,
+          thisBinding: s.thisBinding ?? null
+        };
+      })
+      .filter(Boolean);
+  }
+
+  // Initialize global scope
+  activeScopes['global'] = {
+    scopeId: 'global',
+    type: 'global',
+    name: 'global',
+    variables: {},
+    parentId: null,
+    isPersistent: true,
+    thisBinding: null
+  };
+
   for (let i = 0; i < rawEvents.length; i++) {
     const evt = rawEvents[i];
     switch (evt.type) {
+      case 'Locals': {
+        // Create a new function scope
+        const { scopeId, parentId, locals } = evt.payload;
+        activeScopes[scopeId] = {
+          scopeId,
+          type: 'function',
+          name: scopeId,
+          variables: {},
+          parentId,
+          isPersistent: false,
+          thisBinding: null
+        };
+        for (const [k, v] of Object.entries(locals)) {
+          activeScopes[scopeId].variables[k] = { value: v, type: typeof v };
+        }
+        scopeStack.push(scopeId);
+        break;
+      }
+      case 'Closure': {
+        const { closureId, parentId, bindings } = evt.payload;
+        activeScopes[closureId] = {
+          scopeId: closureId,
+          type: 'closure',
+          name: closureId,
+          variables: {},
+          parentId,
+          isPersistent: true,
+          thisBinding: null
+        };
+        for (const [k, v] of Object.entries(bindings)) {
+          activeScopes[closureId].variables[k] = { value: v, type: typeof v };
+        }
+        scopeStack.push(closureId);
+        break;
+      }
+      case 'VarWrite': {
+        const { scopeId, name, val, valueType } = evt.payload;
+        if (!activeScopes[scopeId]) {
+          activeScopes[scopeId] = {
+            scopeId,
+            type: 'unknown',
+            name: scopeId,
+            variables: {},
+            parentId: null,
+            isPersistent: false,
+            thisBinding: null
+          };
+        }
+        activeScopes[scopeId].variables[name] = { value: val, type: valueType };
+        // Emit ASSIGN event per new schema
+        story.push({
+          type: 'ASSIGN',
+          payload: {
+            varName: name,
+            newValue: val,
+            valueType: valueType,
+            scopeId: scopeId
+          }
+        });
+        break;
+      }
       case 'Step': {
-        const next = rawEvents[i + 1];
-        // Skip step immediately before a function call
-        if (next && next.type === 'EnterFunction') break;
-        // Enhance STEP_LINE with a snapshot of globals
         story.push({
           type: 'STEP_LINE',
           payload: {
             line: evt.payload.line,
             col: evt.payload.col,
             snippet: evt.payload.snippet,
-            globals: { ...globals } // Clone current globals
+            scopes: buildScopesSnapshot(),
+            statementType: evt.payload.statementType
           }
         });
         break;
       }
       case 'EnterFunction': {
-        const name = evt.payload.name;
-        const returnLine = evt.payload.returnLine; // Assume tracer provides this
-        let args = [];
-        let locals = {}; // Store initial locals (parameters)
-        const next = rawEvents[i + 1];
-        // Coalesce following Locals event into args and locals if they exist
-        if (
-          next &&
-          next.type === 'Locals' &&
-          next.payload &&
-          next.payload.locals != null &&
-          typeof next.payload.locals === 'object'
-        ) {
-          locals = next.payload.locals;
-          args = Object.values(locals);
-          i++; // Consume the Locals event
-        }
         story.push({
           type: 'CALL',
           payload: {
-            funcName: name,
-            args: args,
-            locals: locals, // Include initial locals (parameters)
-            returnLine: returnLine // Include return line number
+            funcName: evt.payload.name,
+            args: [], // args can be filled if Locals event is adjacent
+            callSiteLine: evt.payload.callSiteLine,
+            newScopeId: evt.payload.newScopeId,
+            closureScopeId: evt.payload.closureScopeId,
+            thisBinding: evt.payload.thisBinding
           }
         });
         break;
       }
       case 'ExitFunction': {
-        const name = evt.payload.name;
-        // Expect returnValue and locals from the (modified) tracer event
-        const returnValue = evt.payload.returnValue; // May be undefined
-        const locals = evt.payload.locals || {}; // Snapshot at exit
         story.push({
           type: 'RETURN',
           payload: {
-            funcName: name,
-            returnValue: returnValue,
-            locals: locals
+            funcName: evt.payload.name,
+            returnValue: evt.payload.returnValue,
+            returnLine: evt.payload.returnLine,
+            exitingScopeId: evt.payload.exitingScopeId
           }
         });
+        const idx = scopeStack.lastIndexOf(evt.payload.exitingScopeId);
+        if (idx !== -1) scopeStack.splice(idx, 1);
         break;
       }
       case 'ConsoleLog':
       case 'ConsoleWarn':
       case 'ConsoleError': {
-        const text = evt.payload.message || evt.payload.text;
+        const text = evt.payload.text || evt.payload.message;
         story.push({ type: 'CONSOLE', payload: { text } });
-        break;
-      }
-      case 'VarWrite': {
-        // Assume payload includes scope info, e.g., evt.payload.scope === 'global'
-        const isGlobalWrite = evt.payload.scope === 'global';
-        if (isGlobalWrite) {
-          // Only update tracked globals if the write is global
-          globals[evt.payload.name] = evt.payload.val;
-        }
-        // Add isGlobal flag to the ASSIGN event
-        story.push({
-          type: 'ASSIGN',
-          payload: {
-            varName: evt.payload.name,
-            newValue: evt.payload.val,
-            isGlobal: isGlobalWrite
-          }
-        });
         break;
       }
       default:

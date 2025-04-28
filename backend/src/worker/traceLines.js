@@ -90,11 +90,32 @@ module.exports = function traceLines(babel, options = {}) { // Use standard sign
         // --- End Check ---
 
         if (canAddStep) {
-            // Create call statement using the determined line, column, and snippet
+            // Determine statementType from node type
+            let statementType = "other";
+            if (path.isExpressionStatement() && path.get('expression').isAssignmentExpression()) {
+              statementType = "assignment";
+            } else if (path.isReturnStatement()) {
+              statementType = "return";
+            } else if (path.isExpressionStatement() && path.get('expression').isCallExpression()) {
+              statementType = "call";
+            } else if (path.isVariableDeclaration()) {
+              statementType = "declaration";
+            } else if (path.isIfStatement()) {
+              statementType = "if";
+            } else if (path.isForStatement() || path.isWhileStatement() || path.isDoWhileStatement()) {
+              statementType = "loop";
+            }
+
+            // Create call statement using the determined line, column, snippet, and statementType
             const callStatement = t.expressionStatement(
               t.callExpression(
                 t.memberExpression(t.identifier("Tracer"), t.identifier("step")),
-                [t.numericLiteral(line), t.numericLiteral(column), t.stringLiteral(originalSnippet)]
+                [
+                  t.numericLiteral(line),
+                  t.numericLiteral(column),
+                  t.stringLiteral(originalSnippet),
+                  t.stringLiteral(statementType)
+                ]
               )
             );
             callStatement[STEP_ADDED] = true; // Mark generated node

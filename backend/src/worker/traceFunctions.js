@@ -74,14 +74,32 @@ module.exports = function traceFunctions({ types: t }) {
         const end = path.node.loc ? t.numericLiteral(path.node.loc.end.line) : t.nullLiteral();
         const errorParam = path.scope.generateUidIdentifier("err");
 
+        // Retrieve scopeId from traceScope.js
+        let scopeId = "global";
+        if (path.scope && path.scope.data && path.scope.data.scopeId) {
+          scopeId = path.scope.data.scopeId;
+        }
+
+        // Placeholders for thisBinding and callSiteLine (can be null for now)
+        const thisBinding = t.nullLiteral();
+        const callSiteLine = t.nullLiteral();
+
         // 4. Create Tracer calls as AST nodes (Copied from user feedback & FIXED placeholders)
         const enterCall = t.expressionStatement(
           t.callExpression(
             t.memberExpression(t.identifier("Tracer"), t.identifier("enterFunc")),
-            [traceId, t.stringLiteral(fnName), start, end]
+            [
+              traceId,
+              t.stringLiteral(fnName),
+              start,
+              end,
+              t.stringLiteral(scopeId), // newScopeId
+              thisBinding,
+              callSiteLine
+            ]
           )
         );
-         const errorMessageExpr = t.logicalExpression('||',
+        const errorMessageExpr = t.logicalExpression('||',
             t.memberExpression(errorParam, t.identifier("message")),
             t.stringLiteral('Unknown Error')
         );
@@ -94,7 +112,15 @@ module.exports = function traceFunctions({ types: t }) {
         const exitCall = t.expressionStatement( // Fixed placeholder
           t.callExpression(
             t.memberExpression(t.identifier("Tracer"), t.identifier("exitFunc")),
-            [traceId, t.stringLiteral(fnName), start, end]
+            [
+              traceId,
+              t.stringLiteral(fnName),
+              start,
+              end,
+              t.stringLiteral(scopeId), // exitingScopeId
+              t.nullLiteral(), // returnValue placeholder
+              t.nullLiteral()  // returnLine placeholder
+            ]
           )
         );
         const throwStmt = t.throwStatement(errorParam);

@@ -22,9 +22,34 @@ module.exports = function traceVariables({ types: t }) {
         if (path.node[ALREADY]) return;
         path.node[ALREADY] = true; // Mark the assignment expression itself
 
+        // Get scopeId from path.scope.data (set by traceScope.js)
+        let scopeId = "global";
+        if (path.scope && path.scope.data && path.scope.data.scopeId) {
+          scopeId = path.scope.data.scopeId;
+        }
+
+        // Determine valueType from path.node.right
+        let valueType = "unknown";
+        if (path.node.right) {
+          if (t.isNumericLiteral(path.node.right)) valueType = "number";
+          else if (t.isStringLiteral(path.node.right)) valueType = "string";
+          else if (t.isBooleanLiteral(path.node.right)) valueType = "boolean";
+          else if (t.isFunctionExpression(path.node.right) || t.isArrowFunctionExpression(path.node.right)) valueType = "function";
+          else if (t.isObjectExpression(path.node.right)) valueType = "object";
+          else if (t.isArrayExpression(path.node.right)) valueType = "array";
+          else if (t.isNullLiteral(path.node.right)) valueType = "null";
+          else if (t.isIdentifier(path.node.right) && path.node.right.name === "undefined") valueType = "undefined";
+          else valueType = path.node.right.type || "unknown";
+        }
+
         const newRight = t.callExpression(
           t.memberExpression(t.identifier("Tracer"), t.identifier("varWrite")),
-          [ t.stringLiteral(name), path.node.right ]
+          [
+            t.stringLiteral(scopeId),
+            t.stringLiteral(name),
+            path.node.right,
+            t.stringLiteral(valueType)
+          ]
         );
         // Mark the new node to prevent re-instrumentation if traversal restarts
         newRight[ALREADY] = true;

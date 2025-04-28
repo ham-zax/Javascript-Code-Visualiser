@@ -14,6 +14,19 @@ module.exports = function traceScope({ types: t }) {
         if (path.node[ALREADY]) return;
         path.node[ALREADY] = true;
 
+        // --- Generate unique scopeId for this function ---
+        const scopeId = path.scope.generateUidIdentifier("funcScopeId").name + '-' + (typeof nextId === 'function' ? nextId() : Math.floor(Math.random() * 100000));
+        path.scope.data = path.scope.data || {};
+        path.scope.data.scopeId = scopeId;
+
+        // --- Determine parentId (enclosing function or global) ---
+        let parentId = null;
+        if (path.scope.parent && path.scope.parent.data && path.scope.parent.data.scopeId) {
+          parentId = path.scope.parent.data.scopeId;
+        } else {
+          parentId = "global";
+        }
+
         // --- 1) Capture parameters at function entry ---
         const params = path.node.params
           .filter(p => t.isIdentifier(p))
@@ -25,7 +38,11 @@ module.exports = function traceScope({ types: t }) {
         const captureLocalsStmt = t.expressionStatement(
           t.callExpression(
             t.memberExpression(t.identifier("Tracer"), t.identifier("captureLocals")),
-            [t.objectExpression(paramsObjectProps)]
+            [
+              t.stringLiteral(scopeId),
+              t.stringLiteral(parentId),
+              t.objectExpression(paramsObjectProps)
+            ]
           )
         );
         captureLocalsStmt[ALREADY] = true;
@@ -36,7 +53,6 @@ module.exports = function traceScope({ types: t }) {
         }
         // Insert at top of function
         path.get("body").unshiftContainer("body", captureLocalsStmt);
-
 
         // --- 2) Robust Free-Variable Analysis for Closure ---
         const funcScope = path.scope;                   // the function’s own scope
@@ -80,11 +96,15 @@ module.exports = function traceScope({ types: t }) {
           );
         if (closureProps.length > 0) {
           // Generate an ID for this function’s closure
-          const fnIdCall = t.callExpression(t.identifier("nextId"), []);
+          const closureId = "closure-" + (typeof nextId === 'function' ? nextId() : Math.floor(Math.random() * 100000));
           const captureClosureStmt = t.expressionStatement(
             t.callExpression(
               t.memberExpression(t.identifier("Tracer"), t.identifier("captureClosure")),
-              [fnIdCall, t.objectExpression(closureProps)]
+              [
+                t.stringLiteral(closureId),
+                t.stringLiteral(parentId),
+                t.objectExpression(closureProps)
+              ]
             )
           );
           captureClosureStmt[ALREADY] = true;

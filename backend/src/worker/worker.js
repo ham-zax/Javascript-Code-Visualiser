@@ -201,55 +201,83 @@ const TIMEOUT_MILLIS = 5000;
 const EVENT_LIMIT = 500;
 
 const Tracer = {
-  // Existing methods
-  enterFunc: (id, name, start, end) => postEvent(Events.EnterFunction(id, name, start, end)),
-  exitFunc: (id, name, start, end) => postEvent(Events.ExitFunction(id, name, start, end)),
-  errorFunc: (message, id, name, start, end) => postEvent(Events.ErrorFunction(message, id, name, start, end)),
-  log: (...args) => postEvent(Events.ConsoleLog(arrToPrettyStr(args))),
-  warn: (...args) => postEvent(Events.ConsoleWarn(arrToPrettyStr(args))),
-  error: (...args) => postEvent(Events.ConsoleError(arrToPrettyStr(args))),
+  // Enhanced methods for event emission
 
-  // New methods for line stepping
-  step: (line, col, snippet) => postEvent({
-    type: "Step",
-    payload: { line, col, snippet }
+  enterFunc: (id, name, start, end, newScopeId, thisBinding, callSiteLine) => postEvent({
+    type: "EnterFunction",
+    payload: {
+      id, name, start, end,
+      newScopeId,
+      thisBinding,
+      callSiteLine
+    }
   }),
 
-  // Methods for scope tracking
+  exitFunc: (id, name, start, end, exitingScopeId, returnValue, returnLine) => postEvent({
+    type: "ExitFunction",
+    payload: {
+      id, name, start, end,
+      exitingScopeId,
+      returnValue,
+      returnLine
+    }
+  }),
+
+  errorFunc: (message, id, name, start, end) => postEvent({
+    type: "ErrorFunction",
+    payload: { message, id, name, start, end }
+  }),
+
+  log: (...args) => postEvent({ type: "ConsoleLog", payload: { text: arrToPrettyStr(args) } }),
+  warn: (...args) => postEvent({ type: "ConsoleWarn", payload: { text: arrToPrettyStr(args) } }),
+  error: (...args) => postEvent({ type: "ConsoleError", payload: { text: arrToPrettyStr(args) } }),
+
+  // Enhanced step event
+  step: (line, col, snippet, statementType) => postEvent({
+    type: "Step",
+    payload: { line, col, snippet, statementType }
+  }),
+
+  // Enhanced scope tracking
   _currentLocals: {},
-  captureLocals: (locals) => {
+  captureLocals: (scopeId, parentId, locals) => {
     Tracer._currentLocals = locals;
     postEvent({
       type: "Locals",
-      payload: locals
+      payload: { scopeId, parentId, locals }
     });
   },
 
-  // Methods for variable tracking
-  varWrite: (name, val) => {
+  // Enhanced variable tracking
+  varWrite: (scopeId, name, val, valueType) => {
     postEvent({
       type: "VarWrite",
-      payload: { name, val: prettyFormat(val) }
+      payload: {
+        scopeId,
+        name,
+        val: prettyFormat(val),
+        valueType
+      }
     });
-    return val;    // ← return the assigned value
+    return val;
   },
   varRead: (name, val) => {
     postEvent({
       type: "VarRead",
       payload: { name, val: prettyFormat(val) }
     });
-    return val;    // ← return the original value
+    return val;
   },
 
-  // Method for closure capture
-  captureClosure: (fnId, bindings) => {
+  // Enhanced closure capture
+  captureClosure: (closureId, parentId, bindings) => {
     const displayBindings = {};
     for (const key in bindings) {
       displayBindings[key] = prettyFormat(bindings[key]);
     }
     postEvent({
       type: "Closure",
-      payload: { fnId, bindings: displayBindings }
+      payload: { closureId, parentId, bindings: displayBindings }
     });
   },
 
@@ -259,10 +287,14 @@ const Tracer = {
     const reachedEventLimit = events.length >= EVENT_LIMIT;
     const shouldTerminate = reachedEventLimit || hasTimedOut;
     if (shouldTerminate) {
-      postEvent(Events.EarlyTermination(hasTimedOut
-        ? `Terminated early: Timeout of ${TIMEOUT_MILLIS} millis exceeded.`
-        : `Terminated early: Event limit of ${EVENT_LIMIT} exceeded.`
-      ));
+      postEvent({
+        type: "EarlyTermination",
+        payload: {
+          reason: hasTimedOut
+            ? `Terminated early: Timeout of ${TIMEOUT_MILLIS} millis exceeded.`
+            : `Terminated early: Event limit of ${EVENT_LIMIT} exceeded.`
+        }
+      });
       process.exit(1);
     }
   },
