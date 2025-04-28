@@ -12,6 +12,7 @@ module.exports = function traceVariables({ types: t }) {
             path.get("right.callee.object").isIdentifier({ name: "Tracer" })) {
           return;
         }
+        
 
         const left = path.node.left;
         if (!t.isIdentifier(left)) return;
@@ -64,6 +65,11 @@ module.exports = function traceVariables({ types: t }) {
 
         // Skip if not referenced (e.g., declaration, function name)
         if (!path.isReferencedIdentifier()) return;
+
+        // Skip if the identifier is the argument of an UpdateExpression (e.g., count++ or ++count)
+        if (path.parentPath.isUpdateExpression() && path.key === 'argument') {
+          return;
+        }
 
         const name = path.node.name;
         if (SKIP.has(name)) return;

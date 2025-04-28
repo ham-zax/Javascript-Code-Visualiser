@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const testFilePath = path.join(__dirname, 'tdz_test.js');
-const serverUrl = 'ws://localhost:8080'; // Default port
+const serverUrl = 'ws://localhost:8080/ws'; // Default port with WS path
 
 try {
   const codeContent = fs.readFileSync(testFilePath, 'utf8');

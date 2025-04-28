@@ -1,282 +1,338 @@
 // src/App.tsx
-import { useEffect, useRef, useState } from 'react'
-import { Toaster, toast } from 'sonner'
-// Import necessary actions from the store
-import { usePlaybackStore, TraceEvent } from './store/playbackStore'
+import React, { useState, useMemo, useEffect } from "react";
+import _ from "lodash";
+import { TraceEvent } from "./store/playbackStore";
+import { usePlaybackStore } from "./store/playbackStore";
 
-import { CodeViewer, CodeViewerHandle } from './components/CodeViewer'
-import { ConsolePane, ConsolePaneHandle } from './components/ConsolePane'
+// Local types for derived state
+type CallStackFrame = {
+  name: string;
+  type: string;
+  line?: number;
+  scopeId: string;
+};
+
+type DisplayScopeInfo = {
+  name: string;
+  type: string;
+  variables: Array<{
+    varName: string;
+    value: any;
+    hasChanged?: boolean;
+    isClosure?: boolean;
+  }>;
+  isPersistent?: boolean;
+  scopeId: string;
+  parentId: string | null;
+  isActive: boolean;
+};
+import CodeEditor from "./components/CodeEditor";
+import ExecutionControls from "./components/ExecutionControls";
+import VisualizationState from "./components/VisualizationState";
+// import ExplanationOutput from "./components/ExplanationOutput";
+// import SettingsPanel from "./components/SettingsPanel";
+// import { examples } from "./lib/codeExamples";
+import { Button } from "@/components/ui/button";
 import {
-  CallStackPanel,
-  CallStackPaneHandle,
-} from './components/CallStackPanel'
-import {
-  GlobalScopePane,
-  GlobalScopePaneHandle
-} from './components/GlobalScopePane'
-import { Controls } from './components/Controls'
-import { Legend } from './components/Legend'
+  Sheet,
+  SheetContent,
+  SheetTrigger,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import { Settings } from "lucide-react";
 
-import './App.css'
-
-// Helper function to get WebSocket URL
-const url = (path: string) => window.location.origin.replace(/^http/, 'ws') + path;
-
-export default function App() {
-  // WebSocket state
-  const [ws, setWs] = useState<WebSocket | null>(null)
-  // Get state and actions from the store
-  const { events, idx, setEvents, replayTo, isPlaying, setIdx, speed } = usePlaybackStore()
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
-
-  // Local state for UI updates derived from store state
-  const [currentCode, setCurrentCode] = useState('') // Keep track of the code being run
-  // Remove local state for globals and frames, they will be managed by the replay effect
-  // const [currentGlobals, setCurrentGlobals] = useState<Record<string, any>>({})
-  // const [currentFrames, setCurrentFrames] = useState<Frame[]>([])
-
-  // refs for the panes
-  const codeRef = useRef<CodeViewerHandle>(null)
-  const consoleRef = useRef<ConsolePaneHandle>(null)
-  const callStackRef = useRef<CallStackPaneHandle>(null)
-  const globalRef = useRef<GlobalScopePaneHandle>(null)
-
-  // open WS once
-  useEffect(() => {
-    const socket = new WebSocket(url('/ws'))
-    setWs(socket) // Set the WebSocket instance
-
-    socket.onopen = () => console.log('WS connected')
-    socket.onerror = (e) => {
-      console.error('WS error', e)
-      toast.error('WebSocket connection error')
+/** Derive call stack frames */
+function deriveCallStackState(events: TraceEvent[], idx: number): CallStackFrame[] {
+  const stack: CallStackFrame[] = [];
+  for (let i = 0; i <= idx && i < events.length; i++) {
+    const event = events[i];
+    if (event.type === "CALL") {
+      const payload = event.payload as any;
+      stack.push({
+        name: payload.funcName || payload.functionName || "anonymous",
+        type: payload.closureScopeId ? "closure" : "normal",
+        line:
+          "line" in payload && typeof payload.line === "number"
+            ? payload.line
+            : payload.callSiteLine ?? undefined,
+        scopeId: payload.newScopeId || payload.scopeId || "",
+      });
+    } else if (event.type === "RETURN") {
+      if (stack.length > 0) stack.pop();
     }
-    socket.onmessage = (evt) => {
-      const msg = JSON.parse(evt.data)
-      // Add console log to verify received messages
-      console.log('WS ▶︎', msg.type, msg.payload)
-      // Use backend event types
-      if (msg.type === 'STORY_LIST') { // Changed from EVENT_LIST based on backend
-        setErrorMsg(null)
-        setEvents(msg.payload as TraceEvent[]) // Ensure payload matches TraceEvent[]
-        // Set current code from the input when story arrives
-        const codeInput = document.getElementById('code-input') as HTMLTextAreaElement;
-        if (codeInput) {
-          setCurrentCode(codeInput.value);
-        }
-        replayTo(0) // Reset playback to the beginning
-      } else if (msg.type === 'EXECUTION_ERROR') {
-        setErrorMsg(msg.payload.message)
-        toast.error(`Execution Error: ${msg.payload.message}`)
-        consoleRef.current?.append(`Error: ${msg.payload.message}`)
-        setEvents([]) // Clear events on error
-        replayTo(0) // Reset index
-        // Optionally clear code viewer or show error state
-        codeRef.current?.reset();
-        callStackRef.current?.reset();
-        globalRef.current?.reset();
-        consoleRef.current?.reset(); // Also reset console
-        setCurrentCode(''); // Clear the code associated with the error
-      }
-    }
-    socket.onclose = () => console.log('WS closed')
+  }
+  return stack;
+}
 
-    return () => {
-      socket.close()
-    }
-  // Add replayTo to dependencies
-  }, [setEvents, replayTo])
+/** Derive scopes mapping using Lodash deep clone, array variables, and type guards */
+function deriveScopeState(
+  events: TraceEvent[],
+  idx: number,
+  currentCallStack: CallStackFrame[]
+): Record<string, DisplayScopeInfo> {
+  let originalSnapshot: any[] = [];
+  let lastStepLineIdx = -1;
 
-  // reset all panes (UI only) - This might be redundant if replay effect handles reset
-  const resetAllPanes = () => {
-    codeRef.current?.reset()
-    consoleRef.current?.reset()
-    callStackRef.current?.reset()
-    globalRef.current?.reset()
-    // No need to manage local globals/frames state here anymore
+  // Find the most recent STEP_LINE event with scopes
+  for (let i = Math.min(idx, events.length - 1); i >= 0; i--) {
+    const event = events[i];
+    if (
+      event.type === "STEP_LINE" &&
+      event.payload &&
+      Array.isArray((event.payload as any).scopes)
+    ) {
+      originalSnapshot = (event.payload as any).scopes;
+      lastStepLineIdx = i;
+      break;
+    }
   }
 
-  // Effect to update UI based on store's idx and events (Replay Logic)
-  useEffect(() => {
-    // Reset everything
-    codeRef.current?.reset()
-    consoleRef.current?.reset()
-    callStackRef.current?.reset()
-    globalRef.current?.reset()
+  // If no STEP_LINE found, start with a default global scope
+  if (lastStepLineIdx === -1) {
+    originalSnapshot = [{
+      name: "global",
+      type: "global",
+      variables: [],
+      isPersistent: true,
+      scopeId: "global",
+      parentId: null,
+    }];
+  }
 
-    // Replay up to current index
-    let lastGlobals: Record<string, any> = {}
+  // Mark changed variable if ASSIGN event at idx
+  let changedVarKey: string | null = null;
+  if (idx >= 0 && idx < events.length) {
+    const currentEvent = events[idx];
+    if (
+      currentEvent.type === "ASSIGN" &&
+      "scopeId" in currentEvent.payload &&
+      "varName" in currentEvent.payload
+    ) {
+      changedVarKey = `${currentEvent.payload.scopeId}|${currentEvent.payload.varName}`;
+    }
+  }
 
-    for (let i = 0; i < idx && i < events.length; i++) {
-      const ev = events[i]
-      switch (ev.type) {
-        case 'STEP_LINE':
-          // Highlight code and snapshot globals
-          codeRef.current?.setHighlights([{ line: ev.payload.line, type: 'current' }])
-          lastGlobals = ev.payload.globals || {}
-          globalRef.current?.setAllGlobals(lastGlobals)
-          break
+  const displayScopes: Record<string, DisplayScopeInfo> = {};
+  const activeScopeIds = new Set(currentCallStack.map(frame => frame.scopeId));
+  activeScopeIds.add("global");
 
-        case 'CALL':
-          callStackRef.current?.pushFrame(
-            ev.payload.funcName,
-            ev.payload.args,
-            ev.payload.locals || {}
-          )
-          break
+  originalSnapshot.forEach(scope => {
+    if (!scope) return;
+    const clonedScope = _.cloneDeep(scope);
+    const displayScope: DisplayScopeInfo = {
+      ...clonedScope,
+      isActive: activeScopeIds.has(clonedScope.scopeId) || clonedScope.type === "closure",
+      variables: [],
+    };
+    // Convert variables object or array to array of variable objects
+    let vars: Array<any> = [];
+    if (Array.isArray(clonedScope.variables)) {
+      vars = clonedScope.variables;
+    } else if (clonedScope.variables && typeof clonedScope.variables === "object") {
+      vars = Object.entries(clonedScope.variables).map(([varName, variable]) => ({
+        varName,
+        ...(typeof variable === "object" && variable !== null ? variable : { value: variable }),
+      }));
+    }
+    displayScope.variables = vars.map(variable => ({
+      ...variable,
+      hasChanged: `${clonedScope.scopeId}|${variable.varName}` === changedVarKey,
+      isClosure: clonedScope.type === "closure" || (variable as any).isBoundByClosure,
+    }));
+    displayScopes[clonedScope.scopeId] = displayScope;
+  });
 
-        case 'RETURN':
-          callStackRef.current?.popFrame()
-          break
+  return displayScopes;
+}
 
-        case 'ASSIGN':
-          // Only update if it's a global write
-          if (ev.payload.isGlobal) {
-            // Use varName and newValue based on typical schema
-            const varName = ev.payload.varName || ev.payload.name;
-            const newValue = ev.payload.newValue !== undefined ? ev.payload.newValue : ev.payload.value;
-            if (varName !== undefined) { // Ensure varName exists
-                 lastGlobals = { ...lastGlobals, [varName]: newValue };
-                 globalRef.current?.setAllGlobals(lastGlobals);
-            }
-          } else {
-             // Optionally handle local updates if needed, though globals are primary here
-             // Example: Update locals in the current frame if CallStackPanel supports it
-             const varName = ev.payload.varName || ev.payload.name;
-             const newValue = ev.payload.newValue !== undefined ? ev.payload.newValue : ev.payload.value;
-             if (varName !== undefined) {
-                 callStackRef.current?.updateCurrentFrameLocals({ [varName]: newValue });
-             }
-          }
-          break
+/** Derive plain-text explanation */
+function deriveExplanation(events: TraceEvent[], idx: number): string {
+  if (idx < 0 || idx >= events.length) {
+    return idx === -1 ? "Execution not started." : "Execution finished.";
+  }
+  const event = events[idx];
+  const payload = event.payload as any;
+  switch (event.type) {
+    case "STEP_LINE":
+      return `Executing line ${payload.line}. Statement type: ${payload.statementType || "unknown"}.`;
+    case "CALL":
+      return `Calling function "${payload.funcName || "anonymous"}" from line ${
+        "line" in payload && typeof payload.line === "number"
+          ? payload.line
+          : payload.callSiteLine || "?"
+      }. Creating scope ${payload.newScopeId}.`;
+    case "RETURN":
+      return `Returning value ${JSON.stringify(payload.returnValue)} from function "${payload.funcName || "anonymous"}". Exiting scope ${payload.exitingScopeId}.`;
+    case "ASSIGN":
+      return `Assigning value ${JSON.stringify(payload.newValue)} to variable "${payload.varName}" in scope ${payload.scopeId} (line ${
+        "line" in payload && typeof payload.line === "number" ? payload.line : "?"
+      }).`;
+    case "CONSOLE":
+      return `Printing to console: ${payload.text?.trim()}`;
+    default:
+      return `Processing event type: ${event.type}`;
+  }
+}
 
-        case 'CONSOLE':
-          // Use the correct payload field (e.g., text or args)
-          const message = Array.isArray(ev.payload.args) ? ev.payload.args.map((arg: any) => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' ') : String(ev.payload.text || '');
-          consoleRef.current?.append(message)
-          break
+/** Derive console output lines */
+function deriveConsoleOutput(events: TraceEvent[], idx: number): string[] {
+  const output: string[] = [];
+  for (let i = 0; i < idx && i < events.length; i++) {
+    if (events[i].type === "CONSOLE") {
+      output.push((events[i].payload as any).text?.trim());
+    }
+  }
+  return output;
+}
 
-        default:
-          // Optional: Log unknown event types
-          // console.log("Unknown event type:", ev.type);
-          break
+/** Derive highlighted source line */
+function deriveHighlightedLine(events: TraceEvent[], idx: number): number | null {
+  if (
+    idx >= 0 &&
+    idx < events.length &&
+    events[idx].type === "STEP_LINE"
+  ) {
+    const payload = events[idx].payload as { line?: number };
+    if (typeof payload.line === "number") {
+      return payload.line;
+    }
+  }
+  for (let i = idx - 1; i >= 0; i--) {
+    if (events[i].type === "STEP_LINE") {
+      const payload = events[i].payload as { line?: number };
+      if (typeof payload.line === "number") {
+        return payload.line;
       }
     }
+  }
+  return null;
+}
 
-    // After the loop, ensure the highlight reflects the *next* step (at idx)
-    // or the last step if idx is at the end.
-    if (idx < events.length) {
-        const currentEvent = events[idx];
-        if (currentEvent?.type === 'STEP_LINE') {
-            codeRef.current?.setHighlights([{ line: currentEvent.payload.line, type: 'current' }]);
-            // Also ensure globals reflect the state *at* this step
-            globalRef.current?.setAllGlobals(currentEvent.payload.globals || lastGlobals);
+function App() {
+  const { events, idx /* ... other store values ... */ } = usePlaybackStore();
+  const [currentCode, setCurrentCode] = useState("/* Default Code */");
+
+  // Derived state
+  const totalSteps = useMemo(() => events.length, [events]);
+  const derivedCallStack = useMemo(() => deriveCallStackState(events, idx), [events, idx]);
+  const derivedScopes = useMemo(() => deriveScopeState(events, idx, derivedCallStack), [events, idx, derivedCallStack]);
+  const derivedExplanation = useMemo(() => deriveExplanation(events, idx), [events, idx]);
+  const derivedConsole = useMemo(() => deriveConsoleOutput(events, idx), [events, idx]);
+  const derivedHighlightLine = useMemo(() => deriveHighlightedLine(events, idx), [events, idx]);
+
+  // WebSocket logic
+  const { setEvents, replayTo, setIdx, isPlaying, speed } = usePlaybackStore();
+  const [ws, setWs] = useState<WebSocket | null>(null);
+
+  // Establish WebSocket connection on mount
+  useEffect(() => {
+    const socketProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(`${socketProtocol}//${window.location.host}/ws`);
+    socket.onopen = () => setWs(socket);
+
+    socket.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "STORY_LIST") {
+          setEvents(msg.payload);
+          replayTo(0);
         }
-        // If the current event is not STEP_LINE, the highlight from the loop (last STEP_LINE) remains.
-    } else if (idx === events.length && events.length > 0) {
-        // If at the end, keep the highlight on the last executed STEP_LINE
-        // The loop already set this highlight.
-        // Ensure final global state is shown
-        globalRef.current?.setAllGlobals(lastGlobals);
-    }
+        if (msg.type === "EXECUTION_ERROR") {
+          setEvents([]);
+          replayTo(0);
+          // Optionally show error to user
+        }
+      } catch (e) {
+        // Optionally handle parse error
+      }
+    };
 
-  }, [idx, events]) // Dependencies remain the same
+    socket.onerror = () => {
+      // Optionally show error to user
+    };
+
+    socket.onclose = () => {
+      // Optionally show disconnect to user
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, [setEvents, replayTo]);
 
   // Auto-play effect
   useEffect(() => {
     let timer: NodeJS.Timeout | undefined;
-    if (isPlaying && idx < events.length) {
+    if (isPlaying && idx < totalSteps) {
       timer = setTimeout(() => {
         setIdx(idx + 1);
-      }, 1000 / speed); // Use speed from store
+      }, 1000 / speed);
     }
     return () => clearTimeout(timer);
-  }, [isPlaying, idx, events.length, speed, setIdx]);
-
-  // handlers for the buttons
-  const handleRun = () => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-       toast.error("WebSocket not connected.");
-       return;
-    }
-    const codeInput = document.getElementById('code-input') as HTMLTextAreaElement;
-    const code = codeInput?.value;
-    if (!code) {
-        toast.info("Please enter some code to run.");
-        return;
-    }
-    setErrorMsg(null);
-    // Clear previous state before running new code
-    setEvents([]);
-    replayTo(0);
-    resetAllPanes(); // Explicitly reset panes UI
-    setCurrentCode(code); // Set code for viewer immediately
-    // Send RUN_CODE message to backend
-    ws.send(JSON.stringify({ type: 'RUN_CODE', payload: { code } }))
-  }
-
-  // Reset button handler uses replayTo(0) from the store
-  const handleReset = () => replayTo(0)
-
+  }, [isPlaying, idx, totalSteps, speed, setIdx]);
 
   return (
-    <div className="min-h-screen p-6 bg-gray-100 space-y-6">
-      {/* Code input & run/reset */}
-      <div className="space-y-3">
-        <textarea
-          id="code-input"
-          className="w-full h-28 p-2 border rounded font-mono"
-          placeholder="Paste your JS here…"
-          // defaultValue={currentCode} // Let state manage the value if needed, or keep as is
-        />
-        <div className="flex gap-2">
-          <button
-            onClick={handleRun}
-            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
-          >
-            Run
-          </button>
-          <button
-            onClick={handleReset} // Use store action via replayTo
-            className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
-            disabled={events.length === 0 && idx === 0} // Disable if already at start
-          >
-            Reset
-          </button>
+    <div className="min-h-screen flex flex-col bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm p-4 border-b">
+        <div className="max-w-7xl mx-auto flex justify-between items-center">
+          <h1 className="text-xl font-semibold text-gray-800">
+            JS Visualizer (New Layout)
+          </h1>
+          <div className="flex gap-2 items-center">
+            <Button
+              variant="default"
+              size="sm"
+              className="flex items-center"
+              disabled={!ws || ws.readyState !== WebSocket.OPEN}
+              onClick={() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                  console.log("[Frontend App] Preparing to send RUN_CODE. Code value:", currentCode);
+                  ws.send(JSON.stringify({ type: "RUN_CODE", payload: currentCode }));
+                }
+              }}
+            >
+              Run
+            </Button>
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="sm" className="flex items-center">
+                  <Settings className="h-4 w-4 mr-1" /> Settings
+                </Button>
+              </SheetTrigger>
+              <SheetContent>
+                {/* <SettingsPanel /> */}
+              </SheetContent>
+            </Sheet>
+          </div>
         </div>
-        {errorMsg && <p className="text-red-600 text-sm mt-2">Error: {errorMsg}</p>}
-      </div>
+      </header>
 
-      {/* Code viewer */}
-      <div className="bg-white p-4 rounded shadow">
-        <CodeViewer
-          ref={codeRef}
-          code={currentCode} // Pass the current code being visualized
-          // Pass empty objects/arrays to satisfy prop types, as logic uses refs now
-          globals={{}}
-          frames={[]}
-        />
-      </div>
+      {/* Main Content */}
+      <main className="flex-grow max-w-7xl w-full mx-auto px-4 py-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          {/* Col 1: Code & Controls */}
+          <div className="space-y-6">
+            <CodeEditor code={currentCode} highlightedLine={derivedHighlightLine} onChange={setCurrentCode} />
+            <ExecutionControls />
+          </div>
 
-      {/* Controls - Needs wiring inside Controls.tsx */}
-      <div className="bg-white p-4 rounded shadow">
-        <Controls />
-      </div>
-
-      {/* Panes */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="space-y-4">
-          <ConsolePane ref={consoleRef} />
+          {/* Col 2: Visualization & Explanation */}
+          <div className="space-y-6">
+            <VisualizationState callStack={derivedCallStack} scopes={derivedScopes} />
+            {/* <ExplanationOutput explanation={derivedExplanation} consoleOutput={derivedConsole} /> */}
+          </div>
         </div>
-        <div className="space-y-4">
-          {/* Pass refs to children */}
-          <CallStackPanel ref={callStackRef} />
-          <GlobalScopePane ref={globalRef} />
-          <Legend />
-        </div>
-      </div>
+      </main>
 
-      <Toaster position="bottom-right" />
+      {/* Footer (Optional) */}
+      <footer className="bg-white border-t p-3 text-center text-gray-500 text-xs">
+        JS Visualizer Footer
+      </footer>
     </div>
-  )
+  );
 }
+
+export default App;

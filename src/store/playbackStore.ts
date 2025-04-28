@@ -1,25 +1,83 @@
 import { create, StateCreator } from 'zustand'
 
-// Define specific event types based on backend schema
-export type EventType = 'STEP_LINE' | 'CALL' | 'RETURN' | 'ASSIGN' | 'CONSOLE' | string; // Allow string for flexibility if needed
+// --- Enhanced TypeScript interfaces for backend STORY_LIST schema ---
+
+export interface VariableInfo {
+  value: any;        // Serialized variable value
+  type?: string;     // e.g., 'number', 'string', 'function'
+}
+
+export interface ScopeInfo {
+  scopeId: string;
+  type: 'global' | 'function' | 'closure' | 'block' | string;
+  name: string;
+  variables: Record<string, VariableInfo>;
+  parentId: string | null;
+  isPersistent?: boolean;
+  thisBinding?: any;
+}
+
+export interface StepLinePayload {
+  line: number;
+  col: number;
+  snippet: string;
+  scopes: ScopeInfo[];
+  statementType?: string;
+}
+
+export interface CallPayload {
+  funcName: string;
+  args: any[];
+  callSiteLine: number | null;
+  newScopeId: string;
+  closureScopeId?: string | null;
+  thisBinding?: any;
+}
+
+export interface ReturnPayload {
+  funcName: string;
+  returnValue: any;
+  returnLine: number | null;
+  exitingScopeId: string;
+}
+
+export interface AssignPayload {
+  varName: string;
+  newValue: any;
+  valueType?: string;
+  scopeId: string;
+  line?: number;
+}
+
+export interface ConsolePayload {
+  text: string;
+}
+
+export type EventType = 'STEP_LINE' | 'CALL' | 'RETURN' | 'ASSIGN' | 'CONSOLE';
 
 export interface TraceEvent {
-  type: EventType // Use the specific EventType union
-  payload: any
+  type: EventType;
+  payload:
+    | StepLinePayload
+    | CallPayload
+    | ReturnPayload
+    | AssignPayload
+    | ConsolePayload;
 }
 
 interface PlaybackState {
-  events: TraceEvent[]
-  idx: number
-  isPlaying: boolean
-  speed: number
-  setEvents: (events: TraceEvent[]) => void
-  setIdx: (idx: number) => void
-  togglePlay: () => void
-  setSpeed: (speed: number) => void
-  replayTo: (targetIdx: number) => void
-  stepOver: () => void // Add stepOver action
-  stepOut: () => void // Add stepOut action
+  events: TraceEvent[];
+  idx: number;
+  isPlaying: boolean;
+  speed: number;
+  setEvents: (events: TraceEvent[]) => void;
+  setIdx: (idx: number) => void;
+  togglePlay: () => void;
+  setSpeed: (speed: number) => void;
+  replayTo: (targetIdx: number) => void;
+  stepInto: () => void;
+  stepOver: () => void;
+  stepOut: () => void;
 }
 
 type PlaybackStateCreator = StateCreator<PlaybackState>
@@ -38,6 +96,15 @@ const playbackStateCreator: PlaybackStateCreator = (set, get) => ({
     // Allow setting index to events.length (end state)
     if (targetIdx < 0 || targetIdx > events.length) return
     set({ idx: targetIdx, isPlaying: false })
+  },
+
+  stepInto: () => {
+    // Placeholder for stepInto logic
+    console.warn("ACTION: stepInto triggered (Not Implemented)");
+    const { idx, events, replayTo } = get();
+    if (idx < events.length) {
+      replayTo(idx + 1);
+    }
   },
 
   stepOver: () => {

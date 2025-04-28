@@ -1,3 +1,4 @@
+console.debug('[DEBUG] launchWorker.js loaded');
 // backend/src/main/launchWorker.js
 const { Worker } = require('worker_threads');
 const path = require('path');

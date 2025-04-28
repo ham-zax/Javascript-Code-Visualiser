@@ -192,7 +192,10 @@ const reduceEvents = (events) => {
     'EarlyTermination'
   ]);
 
-  return raw.filter(evt => WHITELIST.has(evt.type));
+  console.log('[reduceEvents] raw before filter:', raw);
+  const filteredRaw = raw.filter(evt => WHITELIST.has(evt.type));
+  console.log('[reduceEvents] raw after filter:', filteredRaw);
+  return filteredRaw;
 };
 
 module.exports = { reduceEvents };

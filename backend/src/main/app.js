@@ -7,7 +7,7 @@ const { storyReducer } = require('./storyReducer'); // Import Story reducer
 const port = process.env.PORT || 8080;
 
 // Add callback to confirm listening and error handler for server instance
-const wss = new WebSocket.Server({ port }, () => {
+const wss = new WebSocket.Server({ port, path: '/ws' }, () => {
   console.log(`WebSocket server started and listening on port ${port}`);
 });
 
@@ -79,7 +79,9 @@ sessions.set(ws, { worker: null, events: [] }); // Add events array to session
       session.events = [];
 
       // Spawn worker thread using Node.js worker_threads
-      session.worker = launchWorker(payload.code, async (evtString) => {
+      const codeToRun = typeof payload === 'string' ? payload : payload.code;
+      console.debug(`[DEBUG] Launching worker for ${clientIp} with code length: ${codeToRun.length}`);
+      session.worker = launchWorker(codeToRun, async (evtString) => {
         try {
           const evt = JSON.parse(evtString);
 
@@ -88,7 +90,8 @@ sessions.set(ws, { worker: null, events: [] }); // Add events array to session
 
           // Check if the worker is done
           if (evt.type === 'Done') {
-            console.log(`Worker for ${clientIp} finished. Reducing events...`);
+console.log(`Worker for ${clientIp} finished. Reducing events...`);
+console.log(`raw event count: ${session.events.length}`);
             // Reduce the collected events to raw events and story events
             const reducedEvents = reduceEvents(session.events);
             const storyEvents = storyReducer(reducedEvents);
