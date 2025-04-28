@@ -210,9 +210,16 @@ function deriveHighlightedLine(events: TraceEvent[], idx: number): number | null
   return null;
 }
 
+const DEFAULT_CODE = `function greet(name) {
+  console.log("Hello, " + name + "!");
+}
+greet("World");
+`;
+
 function App() {
   const { events, idx /* ... other store values ... */ } = usePlaybackStore();
-  const [currentCode, setCurrentCode] = useState("/* Default Code */");
+  const [currentCode, setCurrentCode] = useState(DEFAULT_CODE);
+  const [isRunning, setIsRunning] = useState(false);
 
   // Derived state
   const totalSteps = useMemo(() => events.length, [events]);
@@ -238,14 +245,17 @@ function App() {
         if (msg.type === "STORY_LIST") {
           setEvents(msg.payload);
           replayTo(0);
+          setIsRunning(false);
         }
         if (msg.type === "EXECUTION_ERROR") {
           setEvents([]);
           replayTo(0);
+          setIsRunning(false);
           // Optionally show error to user
         }
       } catch (e) {
         // Optionally handle parse error
+        setIsRunning(false);
       }
     };
 
@@ -286,15 +296,27 @@ function App() {
               variant="default"
               size="sm"
               className="flex items-center"
-              disabled={!ws || ws.readyState !== WebSocket.OPEN}
+              disabled={!ws || ws.readyState !== WebSocket.OPEN || isRunning}
               onClick={() => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
-                  console.log("[Frontend App] Preparing to send RUN_CODE. Code value:", currentCode);
+                  setIsRunning(true);
                   ws.send(JSON.stringify({ type: "RUN_CODE", payload: currentCode }));
                 }
               }}
             >
-              Run
+              {isRunning ? "Running..." : "Run"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex items-center"
+              onClick={() => {
+                setCurrentCode(DEFAULT_CODE);
+                setIsRunning(false);
+              }}
+              disabled={isRunning}
+            >
+              Reset
             </Button>
             <Sheet>
               <SheetTrigger asChild>
