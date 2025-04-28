@@ -1,16 +1,34 @@
 // src/App.tsx
-import { useEffect, useRef, useState, useCallback, ChangeEvent } from 'react' // Add ChangeEvent
+import { useEffect, useRef, useState, useCallback, ChangeEvent, lazy, Suspense } from 'react' // Add ChangeEvent, lazy, Suspense
 import { Toaster, toast } from 'sonner'
 
-import { CodeViewer, CodeViewerHandle } from './components/CodeViewer'
-import { ConsolePane, ConsolePaneHandle } from './components/ConsolePane'
-// Import Frame interface
-import { CallStackPanel, CallStackPaneHandle, Frame } from './components/CallStackPanel'
-import { GlobalScopePane, GlobalScopePaneHandle } from './components/GlobalScopePane'
-import { Controls } from './components/Controls'
-import { Legend } from './components/Legend'
+const CodeViewer = lazy(() =>
+  import('./components/CodeViewer').then(module => ({ default: module.CodeViewer }))
+);
+import type { CodeViewerHandle } from './components/CodeViewer';
+import { ConsolePane, ConsolePaneHandle } from './components/ConsolePane';
+
+const CallStackPanel = lazy(() =>
+  import('./components/CallStackPanel').then(module => ({ default: module.CallStackPanel }))
+);
+import type { CallStackPaneHandle, Frame } from './components/CallStackPanel';
+
+const GlobalScopePane = lazy(() =>
+  import('./components/GlobalScopePane').then(module => ({ default: module.GlobalScopePane }))
+);
+import type { GlobalScopePaneHandle } from './components/GlobalScopePane';
+
+import { Controls } from './components/Controls';
+import { Legend } from './components/Legend';
 // Import NarrativePane (assuming it will be created)
 // import { NarrativePane } from './components/NarrativePane';
+
+const WS_MESSAGES = {
+  PLAY: 'PLAY',
+  PAUSE: 'PAUSE',
+  SET_SPEED: 'SET_SPEED',
+  SEEK: 'SEEK'
+};
 
 type EventPayload = any
 
@@ -167,43 +185,55 @@ function Visualizer() {
   // Get the currently selected example object (memoize if examples list grows large)
   const selectedExample = examples.find(ex => ex.id === selectedExampleId) || examples[0];
 
-  // 4) connect once
+  // 4) connect with heartbeat & reconnection logic
   useEffect(() => {
-    const url = window.location.origin
-      .replace(/^http/, 'ws')
-      + '/ws'
-    const s = new WebSocket(url)
-    s.onopen = () => console.log('WS open')
-    s.onerror = e => {
-      console.error('WS err', e)
-      toast.error('WebSocket error')
-    }
-    s.onmessage = msg => {
-      const m = JSON.parse(msg.data) as TraceEvent
-      if (m.type === 'STORY_LIST') {
-        setEvents(m.payload)
-        setErrorMsg(null)
-        setIdx(0)
-        setIsRunning(false)
-      } else if (m.type === 'EVENT_LIST') {
-        // backward compatibility: treat as story
-        setEvents(m.payload)
-        setErrorMsg(null)
-        setIdx(0)
-        setIsRunning(false)
-      } else if (m.type === 'EXECUTION_ERROR') {
-        setErrorMsg(m.payload.message)
-        toast.error(m.payload.message)
-        // Also display error in console pane
-        consoleRef.current?.append(`Error: ${m.payload.message}`)
-        setEvents([])
-        setIdx(0)
-        setIsRunning(false)
-      }
-    }
-    s.onclose = () => console.log('WS closed')
-    setWs(s)
-    return () => { s.close() }
+    let heartbeatInterval: number;
+    const connect = () => {
+      const url = window.location.origin.replace(/^http/, 'ws') + '/ws';
+      const s = new WebSocket(url);
+      s.onopen = () => {
+        console.log('WS open');
+        heartbeatInterval = window.setInterval(() => {
+          if (s.readyState === WebSocket.OPEN) {
+            s.send(JSON.stringify({ type: 'PING' }));
+          }
+        }, 10000);
+      };
+      s.onerror = e => {
+        console.error('WS err', e);
+        toast.error('WebSocket error');
+      };
+      s.onmessage = msg => {
+        const m = JSON.parse(msg.data) as TraceEvent;
+        if (m.type === 'PONG') return;
+        if (m.type === 'STORY_LIST') {
+          setEvents(m.payload);
+          setErrorMsg(null);
+          setIdx(0);
+          setIsRunning(false);
+        } else if (m.type === 'EVENT_LIST') {
+          setEvents(m.payload);
+          setErrorMsg(null);
+          setIdx(0);
+          setIsRunning(false);
+        } else if (m.type === 'EXECUTION_ERROR') {
+          setErrorMsg(m.payload.message);
+          toast.error(m.payload.message);
+          consoleRef.current?.append(`Error: ${m.payload.message}`);
+          setEvents([]);
+          setIdx(0);
+          setIsRunning(false);
+        }
+      };
+      s.onclose = () => {
+        console.log('WS closed, reconnecting...');
+        clearInterval(heartbeatInterval);
+        setTimeout(() => connect(), 5000);
+      };
+      setWs(s);
+    };
+    connect();
+    return () => { ws?.close(); }
   }, [])
 
   // 5) send RUN and STOP, and handle example change
@@ -221,6 +251,26 @@ function Visualizer() {
     setIdx(0); setEvents([]); setErrorMsg(null);
     resetAll(); // Also reset panes
   }
+
+  const play = () => {
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: 'PLAY' }));
+  };
+
+  const pause = () => {
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: 'PAUSE' }));
+  };
+
+  const setSpeed = (speed: number) => {
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: 'SET_SPEED', payload: { speed } }));
+  };
+
+  const seek = (targetIndex: number) => {
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: 'SEEK', payload: { targetIndex } }));
+  };
 
   // Handle example selection change
   const handleExampleChange = (e: ChangeEvent<HTMLSelectElement>) => {
@@ -406,45 +456,36 @@ function Visualizer() {
         {errorMsg && <div className="text-red-700">{errorMsg}</div>}
         {/* Visual code viewer below - pass context for hover */}
         <div className="pt-4">
-          <CodeViewer
-            code={codeInput}
-            ref={codeRef}
-            globals={currentGlobals}
-            frames={currentFrames}
-            highlights={
-              // Compute highlights for the current step
-              (() => {
-                const highlights: { line: number; type: "current" | "return" | "call" }[] = [];
-                if (events[idx - 1]) {
-                  const ev = events[idx - 1];
-                  if (ev.type === 'STEP_LINE') {
-                    highlights.push({ line: ev.payload.line, type: 'current' as const });
+          <Suspense fallback="Loading…">
+            <CodeViewer
+              code={codeInput}
+              ref={codeRef}
+              globals={currentGlobals}
+              frames={currentFrames}
+              highlights={
+                // Compute highlights for the current step
+                (() => {
+                  const highlights: { line: number; type: "current" | "return" | "call" }[] = [];
+                  if (events[idx - 1]) {
+                    const ev = events[idx - 1];
+                    if (ev.type === 'STEP_LINE') {
+                      highlights.push({ line: ev.payload.line, type: 'current' as const });
+                    }
+                    if (ev.type === 'RETURN' && ev.payload?.returnLine) {
+                      highlights.push({ line: ev.payload.returnLine, type: 'return' as const });
+                    }
+                    // Add more highlight logic as needed (e.g., for CALL)
                   }
-                  if (ev.type === 'RETURN' && ev.payload?.returnLine) {
-                    highlights.push({ line: ev.payload.returnLine, type: 'return' as const });
-                  }
-                  // Add more highlight logic as needed (e.g., for CALL)
-                }
-                return highlights;
-              })()
-            }
-          />
+                  return highlights;
+                })()
+              }
+            />
+          </Suspense>
         </div>
       </div>
 
       {/* B) Stepper Controls */}
-      <Controls
-        onNextStep={handleNext}
-        onPrevStep={handlePrev}
-        onStepOver={handleStepOver}
-        onStepOut={handleStepOut}
-        onReset={handleReset}
-        isFirstStep={isFirst}
-        isLastStep={isLast}
-        currentStepDescription={events[idx]?.type || ''}
-        currentStepNumber={idx}
-        totalSteps={events.length}
-      />
+      <Controls />
 
       {/* C) Visualization Panels & Narrative */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 relative">
@@ -461,8 +502,12 @@ function Visualizer() {
         </div>
         {/* Right Column: Stack, Globals, Legend */}
         <div className="space-y-4 relative">
-          <CallStackPanel ref={callStackRef} />
-          <GlobalScopePane ref={globalRef} />
+          <Suspense fallback="Loading…">
+            <CallStackPanel ref={callStackRef} />
+          </Suspense>
+          <Suspense fallback="Loading…">
+            <GlobalScopePane ref={globalRef} />
+          </Suspense>
           <Legend />
         </div>
       </div>

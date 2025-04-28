@@ -24,6 +24,10 @@ const Messages = {
   STEP_OVER: 'STEP_OVER',
   RESUME: 'RESUME',
   STOP: 'STOP',
+  PLAY: 'PLAY',
+  PAUSE: 'PAUSE',
+  SET_SPEED: 'SET_SPEED',
+  SEEK: 'SEEK',
 };
 
 // In-memory session store: ws -> { worker, events }
@@ -35,7 +39,12 @@ wss.on('connection', (ws, req) => { // Add req to log client IP if needed
   console.log(`Client connected from ${clientIp}`);
 
   // Initialize session state
-  sessions.set(ws, { worker: null, events: [] }); // Add events array to session
+sessions.set(ws, { worker: null, events: [] }); // Add events array to session
+  // Set up heartbeat for this connection
+  ws.isAlive = true;
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
 
   ws.on('message', async (message) => {
     console.log(`Received from ${clientIp}:`, message.toString()); // Log message content as string
@@ -146,4 +155,16 @@ wss.on('connection', (ws, req) => { // Add req to log client IP if needed
     }
     sessions.delete(ws); // Clean up on WS error too
   });
+});
+
+const interval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 10000);
+
+wss.on('close', () => {
+  clearInterval(interval);
 });

@@ -1,122 +1,98 @@
+// backend/src/worker/traceScope.js
 module.exports = function traceScope({ types: t }) {
   const ALREADY = Symbol("scopeInstrumented");
+  const SKIP_NAMES = new Set([
+    "Tracer", "nextId", "console",
+    "arguments", "this",       // skip built-ins
+    "_", "lodash", "fetch"
+  ]);
 
   return {
     visitor: {
       Function(path) {
-        // only once per function
+        // --- guard: only instrument once ---
         if (path.node[ALREADY]) return;
         path.node[ALREADY] = true;
 
-        // 1) Capture parameters & locals
+        // --- 1) Capture parameters at function entry ---
         const params = path.node.params
           .filter(p => t.isIdentifier(p))
           .map(p => p.name);
 
-        const locals = new Set(params);
-        path.traverse({
-          VariableDeclarator(vp) {
-            if (t.isIdentifier(vp.node.id)) {
-              locals.add(vp.node.id.name);
-            }
-          },
-          Function(inner) {
-            inner.skip();
-          }
-        });
-        const localsProps = Array.from(locals).map(name =>
+        const paramsObjectProps = params.map(name =>
           t.objectProperty(t.identifier(name), t.identifier(name), false, true)
         );
-        const captureLocals = t.expressionStatement(
+        const captureLocalsStmt = t.expressionStatement(
           t.callExpression(
             t.memberExpression(t.identifier("Tracer"), t.identifier("captureLocals")),
-            [ t.objectExpression(localsProps) ]
+            [t.objectExpression(paramsObjectProps)]
           )
         );
-        captureLocals[ALREADY] = true;
-        // Ensure body exists and is a block before unshifting
-        if (!path.node.body) return; // Handle cases like abstract methods or declarations
+        captureLocalsStmt[ALREADY] = true;
+
+        // Ensure body is a BlockStatement
         if (!t.isBlockStatement(path.node.body)) {
-            // Convert expression body to block statement if necessary
-            path.node.body = t.blockStatement([t.returnStatement(path.node.body)]);
+          path.node.body = t.blockStatement([t.returnStatement(path.node.body)]);
         }
-        path.get("body").unshiftContainer("body", captureLocals);
+        // Insert at top of function
+        path.get("body").unshiftContainer("body", captureLocalsStmt);
 
 
-        // 2) Capture closure (free vars)
-        const bound = new Set([...locals, path.node.id?.name].filter(Boolean));
-        const free = new Set();
+        // --- 2) Robust Free-Variable Analysis for Closure ---
+        const funcScope = path.scope;                   // the function’s own scope
+        const boundNames = new Set(Object.keys(funcScope.bindings));
+        // Also include the function’s own name (for FunctionDeclaration)
+        if (path.node.id && t.isIdentifier(path.node.id)) {
+          boundNames.add(path.node.id.name);
+        }
+
+        const freeNames = new Set();
         path.traverse({
           Identifier(idPath) {
-            // Check if the identifier is a binding identifier (declaration)
-            if (idPath.isBindingIdentifier()) return;
+            // Only real references, not declarations, keys, tracer calls, etc.
+            if (!idPath.isReferencedIdentifier()) return;
+            const name = idPath.node.name;
+            if (SKIP_NAMES.has(name)) return;
 
-            // Check if it's a property of a member expression
-            if (idPath.parentPath.isMemberExpression() && idPath.key === 'property' && !idPath.parentPath.node.computed) return;
+            // Avoid instrumentation of our own captureLocals or captureClosure AST
+            if (idPath.node[ALREADY]) return;
 
-            // Check if it's a key in an object property
-            if (idPath.parentPath.isObjectProperty() && idPath.key === 'key' && !idPath.parentPath.node.computed) return;
-
-            // Check if it's part of a label
-            if (idPath.parentPath.isLabeledStatement() && idPath.key === 'label') return;
-            if (idPath.parentPath.isBreakStatement() && idPath.key === 'label') return;
-            if (idPath.parentPath.isContinueStatement() && idPath.key === 'label') return;
-
-            // Check if it's already marked or bound locally
-            if (
-              bound.has(idPath.node.name) ||
-              idPath.node[ALREADY]
-            ) {
+            // Find the binding (if any)
+            const binding = idPath.scope.getBinding(name);
+            if (!binding) {
+              // No binding => likely a global; skip or include as you choose
               return;
             }
-
-            // Check if it's a referenced identifier (not a declaration/binding)
-            if (idPath.isReferencedIdentifier()) {
-                 // Additional check: ensure it's not the 'Tracer' identifier itself or its methods
-                 if (idPath.node.name === 'Tracer') return;
-                 if (idPath.parentPath.isMemberExpression() && idPath.parentPath.get('object').isIdentifier({ name: 'Tracer' })) return;
-
-                 // Check scope to ensure it's not shadowed by an inner scope's binding
-                 const binding = idPath.scope.getBinding(idPath.node.name);
-                 // If there's a binding, and it's NOT defined in the current function's scope or outer scopes
-                 // (meaning it's defined in an inner scope), then it's not free in *this* function's context.
-                 // However, the simple check `bound.has` should cover most cases.
-                 // A more robust check might involve comparing `binding.path.scope` with `path.scope`.
-                 // For now, let's rely on the `bound` check and `isReferencedIdentifier`.
-
-                 free.add(idPath.node.name);
+            // If the binding’s defining scope is NOT the current function’s scope,
+            // then this is a free (outer) variable that we should capture.
+            if (binding.scope !== funcScope) {
+              freeNames.add(name);
             }
           },
-          Function(inner) { inner.skip(); } // Skip inner functions to avoid capturing their free vars
+          // Don’t descend into nested functions
+          Function(inner) { inner.skip(); }
         });
 
-
-        // filter out internal names
-        const SKIP = new Set(["Tracer", "nextId", "console", "_", "lodash", "fetch"]);
-        const closureProps = Array.from(free)
-          .filter(n => !SKIP.has(n))
+        // Build closure‐capture only if we found any true frees
+        const closureProps = Array.from(freeNames)
           .map(name =>
             t.objectProperty(t.identifier(name), t.identifier(name), false, true)
           );
-        if (closureProps.length) {
-          const captureClosure = t.expressionStatement(
+        if (closureProps.length > 0) {
+          // Generate an ID for this function’s closure
+          const fnIdCall = t.callExpression(t.identifier("nextId"), []);
+          const captureClosureStmt = t.expressionStatement(
             t.callExpression(
               t.memberExpression(t.identifier("Tracer"), t.identifier("captureClosure")),
-              [ t.callExpression(t.identifier("nextId"), []), t.objectExpression(closureProps) ]
+              [fnIdCall, t.objectExpression(closureProps)]
             )
           );
-          captureClosure[ALREADY] = true;
-          // insert right after the function statement
-          const stmt = path.getStatementParent();
-          // Ensure stmt exists before inserting; handle expression contexts if necessary
-          if (stmt) {
-            stmt.insertAfter(captureClosure);
-          } else {
-            // Fallback or error for functions not directly within a statement context
-            // This might happen for function expressions used directly in calls, etc.
-            // Consider if path.insertAfter() is appropriate or if an error should be logged.
-            console.warn("[traceScope] Could not find statement parent for closure capture.");
-            // path.insertAfter(captureClosure); // Potential fallback, might place incorrectly
+          captureClosureStmt[ALREADY] = true;
+
+          // Insert *after* the function declaration
+          const stmtParent = path.getStatementParent();
+          if (stmtParent) {
+            stmtParent.insertAfter(captureClosureStmt);
           }
         }
       }
