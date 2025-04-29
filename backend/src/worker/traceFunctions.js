@@ -60,6 +60,7 @@ module.exports = function traceFunctions({ types: t }) {
 
         // 3. Prepare IDs and Tracer arguments (Copied from user feedback)
         const traceId = path.scope.generateUidIdentifier("traceId");
+// Store traceId name in scope data for ReturnStatement visitor
         let fnName = 'anonymous';
         if (path.node.id) {
             fnName = path.node.id.name;
@@ -200,7 +201,7 @@ module.exports = function traceFunctions({ types: t }) {
 
         // 3. Re-gather info needed for Tracer.exitFunc
         // traceId should be in scope from the Function visitor's newBody
-        const traceIdIdentifier = t.identifier("traceId"); // Assume it's accessible
+        // Retrieve traceIdName from scope data
 
         let fnName = 'anonymous';
         if (funcPath.node.id) {
@@ -230,7 +231,50 @@ module.exports = function traceFunctions({ types: t }) {
              scopeId = funcPath.scope.data.scopeId;
          }
 
+        // Find the traceId identifier declared in the function scope
+        let traceIdIdentifier;
+        // const funcPath = path.getFunctionParent(); // Already defined above
 
+        if (funcPath && funcPath.scope) {
+            // Attempt 1: Find binding by the original base name "traceId"
+            // Babel's scope analysis should handle the unique generated name (_traceIdX)
+            const binding = funcPath.scope.getBinding("traceId");
+
+            if (binding && binding.identifier) {
+                 traceIdIdentifier = binding.identifier;
+                 console.log(`[traceFunctions ReturnStatement] Found traceId binding identifier (name: '${traceIdIdentifier.name}') via getBinding.`);
+            } else {
+                 // Attempt 2: If getBinding didn't work, manually find the VariableDeclarator
+                 // This relies on the structure created by the Function visitor (const _traceId = nextId();)
+                 console.log(`[traceFunctions ReturnStatement] getBinding('traceId') failed. Attempting manual search...`);
+                 const functionBodyPaths = funcPath.get('body.body'); // Path to the array of statement paths
+                 if (Array.isArray(functionBodyPaths)) {
+                     const traceIdDeclarationPath = functionBodyPaths.find(
+                         stmtPath => stmtPath.isVariableDeclaration() &&
+                                     stmtPath.node.declarations.length > 0 &&
+                                     stmtPath.node.declarations[0]?.id?.name?.startsWith('_traceId') // Heuristic match based on Function visitor
+                     );
+                     if (traceIdDeclarationPath) {
+                         traceIdIdentifier = traceIdDeclarationPath.node.declarations[0].id;
+                         console.log(`[traceFunctions ReturnStatement] Found traceId identifier (name: '${traceIdIdentifier.name}') via manual search.`);
+                     } else {
+                         console.log(`[traceFunctions ReturnStatement] Manual search for traceId declaration also failed.`);
+                     }
+                 } else {
+                      console.log(`[traceFunctions ReturnStatement] Could not get function body paths for manual search.`);
+                 }
+            }
+        } else {
+             console.log(`[traceFunctions ReturnStatement] Could not get function path or scope.`);
+        }
+
+        // Fallback if neither method worked
+        if (!traceIdIdentifier) {
+            console.error("[traceFunctions ReturnStatement] CRITICAL: Could not find traceId binding or identifier!");
+            // Using the generated name pattern as a last resort fallback is risky but might prevent crashes
+            traceIdIdentifier = t.identifier("_traceId"); // Very risky fallback
+            console.warn(`[traceFunctions ReturnStatement] Falling back to risky identifier: ${traceIdIdentifier.name}`);
+        }
         // 4. Create the specific Tracer.exitFunc call
         const exitCallSpecific = t.expressionStatement(
             t.callExpression(

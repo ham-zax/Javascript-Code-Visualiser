@@ -2,12 +2,26 @@ const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 
-const testFilePath = path.join(__dirname, 'tdz_test.js');
+// const testFilePath = path.join(__dirname, 'tdz_test.js');
 const serverUrl = 'ws://localhost:8080/ws'; // Default port with WS path
 
 try {
-  const codeContent = fs.readFileSync(testFilePath, 'utf8');
-  console.log(`Read test file: ${testFilePath}`);
+  // const codeContent = fs.readFileSync(testFilePath, 'utf8');
+  // console.log(`Read test file: ${testFilePath}`);
+
+  const codeContent = `function createCounter() {
+    let count = 0;
+    return function() {
+      count++;
+      console.log(count);
+    };
+  }
+
+  const myCounter = createCounter();
+
+  myCounter(); // Output: 1
+  myCounter(); // Output: 2`;
+  console.log('Using hardcoded createCounter test code.');
 
   const ws = new WebSocket(serverUrl);
 
