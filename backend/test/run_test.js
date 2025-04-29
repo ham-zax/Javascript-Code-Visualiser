@@ -1,6 +1,8 @@
 const babel = require('@babel/core');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm'); // Add vm module
+const prettyFormat = require('pretty-format').default; // For formatting values in Tracer
 
 // Import the plugins (adjust paths if necessary, assuming run_test.js is in backend/test/)
 const { traceScopePlugin: traceScope } = require('../src/worker/traceScope'); // Destructure the plugin function
@@ -53,11 +55,100 @@ try {
   console.log('-----------------\n');
 
   console.log('Transformation complete. Final code and AST printed above.');
-
-} catch (err) {
-  console.error(`Error during Babel transformation or file reading: ${err}`);
+  
+    // --- Execute the transformed code ---
+    console.log('\nExecuting transformed code...');
+  
+    const nextId = (() => {
+      let id = 0;
+      return () => id++;
+    })();
+  
+    const eventsLog = []; // Store events for verification
+  
+    const Tracer = {
+      // Simple console logging tracer for verification
+      logEvent: (type, payload) => {
+        const event = { type, payload };
+        eventsLog.push(event); // Store the event
+        // Log specific events relevant to the verification steps
+        if (['EnterFunction', 'ExitFunction', 'VarWrite', 'Closure', 'Locals', 'Step', 'ErrorFunction'].includes(type)) {
+           console.log(`[Tracer Event] ${type}:`, JSON.stringify(payload, (key, value) =>
+             typeof value === 'function' ? '[Function]' : value // Avoid logging full functions
+           , 2));
+        }
+      },
+      enterFunc: (id, name, start, end, newScopeId, thisBinding, callSiteLine) => Tracer.logEvent('EnterFunction', { id, name, start, end, newScopeId, thisBinding, callSiteLine }),
+      exitFunc: (id, name, start, end, exitingScopeId, returnValue, returnLine) => Tracer.logEvent('ExitFunction', { id, name, start, end, exitingScopeId, returnValue: prettyFormat(returnValue), returnLine }), // Use prettyFormat
+      errorFunc: (message, id, name, start, end) => Tracer.logEvent('ErrorFunction', { message, id, name, start, end }),
+      log: (...args) => Tracer.logEvent('ConsoleLog', { text: args.map(a => prettyFormat(a)).join(' ') }),
+      warn: (...args) => Tracer.logEvent('ConsoleWarn', { text: args.map(a => prettyFormat(a)).join(' ') }),
+      error: (...args) => Tracer.logEvent('ConsoleError', { text: args.map(a => prettyFormat(a)).join(' ') }),
+      step: (line, col, snippet, statementType) => Tracer.logEvent('Step', { line, col, snippet, statementType }),
+      captureLocals: (scopeId, parentId, locals) => {
+          const formattedLocals = {};
+          for(const key in locals) {
+              formattedLocals[key] = prettyFormat(locals[key]);
+          }
+          Tracer.logEvent('Locals', { scopeId, parentId, locals: formattedLocals });
+      },
+      varWrite: (scopeId, name, val, valueType, line) => { // Added line
+          Tracer.logEvent('VarWrite', { scopeId, name, val: prettyFormat(val), valueType, line }); // Use prettyFormat
+          return val; // Important: return the value
+      },
+      varRead: (name, val) => {
+          // Not strictly needed for this verification, but good to have
+          // Tracer.logEvent('VarRead', { name, val: prettyFormat(val) });
+          return val; // Important: return the value
+      },
+      captureClosure: (closureId, parentId, bindings) => {
+          const displayBindings = {};
+          for (const key in bindings) {
+            displayBindings[key] = prettyFormat(bindings[key]); // Use prettyFormat
+          }
+          Tracer.logEvent('Closure', { closureId, parentId, bindings: displayBindings });
+      },
+      iterateLoop: () => { /* No-op for this test */ }, // Add dummy iterateLoop
+    };
+  
+    const sandbox = {
+      nextId,
+      Tracer,
+      console: { // Redirect console inside VM to Tracer
+          log: Tracer.log,
+          warn: Tracer.warn,
+          error: Tracer.error,
+      },
+      // Add other globals if the test code needs them (e.g., setTimeout)
+      setTimeout,
+      queueMicrotask,
+      prettyFormat, // Make available if needed by instrumented code itself
+    };
+  
+    try {
+      vm.runInNewContext(result.code, sandbox);
+      console.log('Execution finished.');
+      // Optional: Print all captured events at the end
+      // console.log('\n--- All Captured Events ---');
+      // console.log(JSON.stringify(eventsLog, null, 2));
+      // console.log('--------------------------');
+    } catch (runtimeError) {
+      console.error('\n--- Runtime Error ---');
+      console.error(runtimeError);
+      console.error('---------------------\n');
+      // Log the error event via Tracer if possible
+      Tracer.logEvent('UncaughtError', {
+          name: runtimeError.name,
+          message: runtimeError.message,
+          stack: runtimeError.stack
+      });
+    }
+  
+  
+  } catch (err) {
+    console.error(`Error during Babel transformation, file reading, or execution: ${err}`);
   console.error(err.stack); // Print stack trace for better debugging
   process.exit(1);
 }
 
-process.exit(0); // Exit cleanly
+// process.exit(0); // Comment out to see async logs if any

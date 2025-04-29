@@ -79,6 +79,12 @@ console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', 
           Identifier(idPath) {
             // Only real references, not declarations, keys, tracer calls, etc.
             if (!idPath.isReferencedIdentifier()) return;
+
+            // Skip catch clause parameters (e.g., _err, _err2)
+            if (idPath.parentPath.isCatchClause() && idPath.key === 'param') {
+                // Optional: console.log(`[traceScope FreeVar Check] Skipping catch clause param: ${idPath.node.name}`);
+                return;
+            }
             const name = idPath.node.name;
             if (SKIP_NAMES.has(name)) return;
 
@@ -93,6 +99,13 @@ console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', 
             }
             // If the binding’s defining scope is NOT the current function’s scope,
             // then this is a free (outer) variable that we should capture.
+            // *** NEW CHECK ***
+            // Check if the binding scope's defining node is a CatchClause
+            if (binding.scope.path.isCatchClause()) {
+                // Optional: console.log(`[traceScope FreeVar Check] Skipping '${idPath.node.name}' because it is bound in a CatchClause.`);
+                return; // Don't treat catch parameters like _err as free variables
+            }
+            // *** END NEW CHECK ***
             if (binding.scope !== funcScope) {
               freeNames.add(name);
             }
