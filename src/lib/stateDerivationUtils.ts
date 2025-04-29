@@ -6,6 +6,7 @@ import {
   CallPayload,
   ReturnPayload,
   AssignPayload,
+  ConsolePayload,
 } from "../store/playbackStore";
 
 /**
@@ -236,27 +237,27 @@ export function deriveHeapObjects(
   // Iterate through events up to the current index to find function definitions/assignments
   for (let i = 0; i <= currentEventIndex && i < events.length; i++) {
     const event = events[i];
-    let targetPayload: any = null;
+    let targetPayload: AssignPayload | null = null;
     let scopeSnapshot: any[] | undefined;
-
+    
     // Look for assignments or returns that might involve functions
     // Assumption: Function info (like its scopeId and defining scope) is part of the value payload
     if (event.type === "ASSIGN") {
-      targetPayload = event.payload as any;
+      targetPayload = event.payload as AssignPayload;
       // Find the most recent scope snapshot *before or at* this event
       for (let j = i; j >= 0; j--) {
-          if (events[j].type === "STEP_LINE" && (events[j].payload as any)?.scopes) {
-              scopeSnapshot = (events[j].payload as any).scopes;
+          if (events[j].type === "STEP_LINE" && (events[j].payload as StepLinePayload)?.scopes) {
+              scopeSnapshot = (events[j].payload as StepLinePayload).scopes;
               break;
           }
       }
     } else if (event.type === "RETURN") {
        // Similar logic might be needed for RETURN if functions can be returned
-       // targetPayload = event.payload as any; // Check returnValue
+       // targetPayload = event.payload as ReturnPayload; // Check returnValue
        // scopeSnapshot = ... find previous STEP_LINE ...
     } else if (event.type === "STEP_LINE") {
         // Check for nested ASSIGN events if backend structures them this way
-        // Example: if (event.payload?.subEvent?.type === 'ASSIGN') { targetPayload = event.payload.subEvent.payload; scopeSnapshot = event.payload.scopes }
+        // Example: if ((event.payload as StepLinePayload)?.subEvent?.type === 'ASSIGN') { targetPayload = (event.payload as StepLinePayload).subEvent.payload; scopeSnapshot = (event.payload as StepLinePayload).scopes }
     }
 
 
@@ -298,24 +299,33 @@ export function deriveExplanation(events: TraceEvent[], currentEventIndex: numbe
     return currentEventIndex === -1 ? "Execution not started." : "Execution finished.";
   }
   const event = events[currentEventIndex];
-  const payload = event.payload as any;
   switch (event.type) {
-    case "STEP_LINE":
+    case "STEP_LINE": {
+      const payload = event.payload as StepLinePayload;
       return `Executing line ${payload.line}. Statement type: ${payload.statementType || "unknown"}.`;
-    case "CALL":
+    }
+    case "CALL": {
+      const payload = event.payload as CallPayload;
       return `Calling function "${payload.funcName || "anonymous"}" from line ${
-        "line" in payload && typeof payload.line === "number"
-          ? payload.line
-          : payload.callSiteLine || "?"
+        payload.callSiteLine !== null && payload.callSiteLine !== undefined
+          ? payload.callSiteLine
+          : "?"
       }. Creating scope ${payload.newScopeId}.`;
-    case "RETURN":
+    }
+    case "RETURN": {
+      const payload = event.payload as ReturnPayload;
       return `Returning value ${JSON.stringify(payload.returnValue)} from function "${payload.funcName || "anonymous"}". Exiting scope ${payload.exitingScopeId}.`;
-    case "ASSIGN":
+    }
+    case "ASSIGN": {
+      const payload = event.payload as AssignPayload;
       return `Assigning value ${JSON.stringify(payload.newValue)} to variable "${payload.varName}" in scope ${payload.scopeId} (line ${
-        "line" in payload && typeof payload.line === "number" ? payload.line : "?"
+        payload.line !== undefined ? payload.line : "?"
       }).`;
-    case "CONSOLE":
+    }
+    case "CONSOLE": {
+      const payload = event.payload as ConsolePayload;
       return `Printing to console: ${payload.text?.trim()}`;
+    }
     default:
       return `Processing event type: ${event.type}`;
   }
@@ -326,7 +336,8 @@ export function deriveConsoleOutput(events: TraceEvent[], currentEventIndex: num
   const output: string[] = [];
   for (let i = 0; i < currentEventIndex && i < events.length; i++) {
     if (events[i].type === "CONSOLE") {
-      output.push((events[i].payload as any).text?.trim());
+      const payload = events[i].payload as ConsolePayload;
+      output.push(payload.text?.trim());
     }
   }
   return output;
