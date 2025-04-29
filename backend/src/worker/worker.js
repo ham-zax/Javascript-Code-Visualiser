@@ -13,8 +13,8 @@ const prettyFormat = require('pretty-format').default; // Import default export
 const { traceLoops } = require('./loopTracer');
 const traceLines = require('./traceLines');
 // const traceScopeAndClosures = require('./traceScopeAndClosures'); // Replaced
-const traceScope = require('./traceScope');             // New scope plugin
-const traceVariables = require('./traceVariables');       // New variable plugin
+const { traceScopePlugin } = require('./traceScope');             // New scope plugin
+const { traceVariablesPlugin } = require('./traceVariables');       // New variable plugin
 const traceFunctions = require('./traceFunctions'); // Require the new plugin
 const preserveLoc = require('./preserveLoc');
 
@@ -108,8 +108,8 @@ try {
         preserveLoc,                                 // 1) stash loc
         traceLoops,                                  // 2) timeout checks
         [ traceLines, { originalSource: jsSourceCode } ], // 3) step calls
-        traceScope,                                  // 4) locals & closures
-        traceVariables,                              // 5) varWrite & varRead
+        traceScopePlugin,                            // 4) locals & closures
+        traceVariablesPlugin,                        // 5) varWrite & varRead
         traceFunctions                               // 6) enter/exit/errorFunc
       ]
     })
