@@ -175,3 +175,103 @@ display: block;
   background: #222 !important;
   color: #fff !important;
 }
+
+/* Basic styling for scope containers */
+.scope-container {
+  border: 1px solid #ccc;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+/* --- Scope Visualization Styles --- */
+
+/* Base Scope Container - already exists, maybe add rounded corners */
+.scope-container {
+  border-radius: var(--radius-md); /* Use theme variable */
+  transition: all 0.2s ease-in-out; /* Smooth transitions */
+  border-width: 1px; /* Ensure border width is consistent */
+}
+
+/* Scope Type Styling */
+.scope-global {
+  background-color: oklch(0.95 0.02 260 / 50%); /* Light purple */
+  border-color: oklch(0.8 0.05 260);
+}
+.scope-function {
+  background-color: oklch(0.95 0.02 150 / 50%); /* Light teal */
+  border-color: oklch(0.8 0.05 150);
+}
+.scope-block {
+  background-color: oklch(0.95 0.01 80 / 50%);  /* Light yellow-green */
+  border-color: oklch(0.8 0.03 80);
+}
+.scope-closure {
+  background-color: oklch(0.95 0.02 30 / 50%);  /* Light orange */
+  border-color: oklch(0.8 0.05 30);
+}
+
+/* Scope State Styling */
+.scope-active {
+  border-width: 2px;
+  border-color: oklch(0.6 0.15 250); /* Brighter blue border */
+  box-shadow: 0 0 5px oklch(0.6 0.15 250 / 50%);
+}
+
+.scope-persistent {
+  border-style: dashed;
+  border-color: oklch(0.6 0.03 100); /* Dashed green border */
+}
+/* Alternative persistent marker using ::before */
+/* .scope-persistent::before {
+  content: "P";
+  display: inline-block;
+  background-color: oklch(0.7 0.05 100);
+  color: white;
+  border-radius: 50%;
+  width: 1.2em;
+  height: 1.2em;
+  text-align: center;
+  line-height: 1.2em;
+  font-size: 0.7em;
+  margin-right: 6px;
+  font-weight: bold;
+} */
+
+/* Variable Styling */
+.variable-item {
+  margin: 2px 0;
+  font-size: 0.9em;
+}
+
+.variable-closure {
+  color: oklch(0.5 0.1 280); /* Purple text */
+  font-style: italic;
+}
+
+.variable-changed {
+  font-weight: bold;
+  /* Add a subtle background pulse or glow effect */
+  animation: highlight-change 1.5s ease-out;
+}
+
+@keyframes highlight-change {
+  0% { background-color: transparent; }
+  50% { background-color: oklch(0.9 0.05 50 / 40%); } /* Subtle yellow flash */
+  100% { background-color: transparent; }
+}
+
+.variable-value {
+  color: oklch(0.4 0 0); /* Darker grey for value */
+}
+
+.dark .scope-global { background-color: oklch(0.3 0.05 260 / 50%); border-color: oklch(0.5 0.08 260); }
+.dark .scope-function { background-color: oklch(0.3 0.05 150 / 50%); border-color: oklch(0.5 0.08 150); }
+.dark .scope-block { background-color: oklch(0.3 0.03 80 / 50%); border-color: oklch(0.5 0.05 80); }
+.dark .scope-closure { background-color: oklch(0.3 0.05 30 / 50%); border-color: oklch(0.5 0.08 30); }
+.dark .scope-active { border-color: oklch(0.7 0.18 250); box-shadow: 0 0 7px oklch(0.7 0.18 250 / 60%); }
+.dark .scope-persistent { border-color: oklch(0.7 0.05 100); }
+.dark .variable-closure { color: oklch(0.7 0.1 280); }
+.dark .variable-value { color: oklch(0.8 0 0); }
+/* The global @keyframes highlight-change will apply in dark mode as well. */
+/* Removed invalid nested keyframe definition. */
+/* --- End Scope Visualization Styles --- */
