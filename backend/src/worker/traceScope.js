@@ -21,6 +21,7 @@ const traceScopePlugin = function traceScope({ types: t }) {
     visitor: {
       Function(path) {
         // --- guard: only instrument once ---
+console.log(`[traceScope] Entering Function visitor for node type: ${path.node.type}, Name: ${path.node.id?.name || '(anon)'}, Parent type: ${path.parent.type}`);
         if (path.node[SCOPE_INSTRUMENTED]) return; // Use exported constant
         path.node[SCOPE_INSTRUMENTED] = true;     // Use exported constant
 
@@ -116,7 +117,7 @@ console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', 
               t.memberExpression(t.identifier("Tracer"), t.identifier("captureClosure")),
               [
                 t.stringLiteral(closureId),
-                t.stringLiteral(parentId),
+                t.stringLiteral(scopeId),
                 t.objectExpression(closureProps)
               ]
             )
