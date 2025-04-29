@@ -5,7 +5,7 @@ const path = require('path');
 // Import the plugins (adjust paths if necessary, assuming run_test.js is in backend/test/)
 const { traceScopePlugin: traceScope } = require('../src/worker/traceScope'); // Destructure the plugin function
 const traceFunctions = require('../src/worker/traceFunctions');
-const traceVariables = require('../src/worker/traceVariables'); // The modified one
+const { traceVariablesPlugin: traceVariables } = require('../src/worker/traceVariables'); // Destructure the plugin
 const traceLines = require('../src/worker/traceLines');
 // preserveLoc might be needed depending on the exact setup, include it for safety
 const preserveLoc = require('../src/worker/preserveLoc');
@@ -27,8 +27,8 @@ try {
       // preserveLoc should ideally run first if needed to store original locations
       preserveLoc,
       traceScope,
-      traceFunctions,
       traceVariables, // Use the modified version
+      traceFunctions,
       traceLines,
     ],
     ast: true, // Request the AST to be generated

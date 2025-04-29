@@ -1,5 +1,6 @@
 // backend/src/worker/traceFunctions.js
 const { generateUniqueId, SCOPE_INSTRUMENTED } = require('./traceScope'); // Import from traceScope
+const { traceVariablesVisitor } = require('./traceVariables'); // Import the visitor object
 
 module.exports = function traceFunctions({ types: t }) {
   const FUNCTION_TRACED = Symbol("functionTraced");

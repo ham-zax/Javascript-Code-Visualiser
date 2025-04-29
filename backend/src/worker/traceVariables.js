@@ -1,4 +1,4 @@
-const traceVariablesVisitor = {
+const traceVariablesVisitor = (t, ALREADY, SKIP) => ({
     // Wrap the RHS of x = expr as x = Tracer.varWrite("x", expr)
     AssignmentExpression(path) {
 console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${JSON.stringify(path.node.loc)}`);
@@ -395,14 +395,15 @@ if (binding) {
         // path.skip(); // Skip further traversal on the replaced node
       }
     }
-};
+    
+  );
 
 const traceVariablesPlugin = function traceVariables({ types: t }) {
   const SKIP = new Set(["Tracer", "nextId", "console", "_", "lodash", "fetch"]);
   const ALREADY = Symbol("varAccessInstrumented"); // Keep symbol local to plugin instance if needed
 
   return {
-    visitor: traceVariablesVisitor // Use the extracted visitor
+    visitor: traceVariablesVisitor(t, ALREADY, SKIP) // Pass SKIP set to visitor
   };
 };
 
