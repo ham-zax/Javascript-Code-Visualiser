@@ -40,6 +40,7 @@ export interface VariableInfo {
   isClosure?: boolean;
   hasChanged?: boolean;
   bindingType?: "local" | "global" | "closure";
+  type?: string;
 }
 
 export interface DisplayScopeInfo {
@@ -74,7 +75,7 @@ export interface FrameData {
 }
 
 export interface HeapObjectData {
-  definingScopeId: boolean;
+  definingScopeId: string | null;
   id: string;
   type: 'object' | 'array' | 'function';
   properties?: Record<string, Variable>; // For objects and arrays with string keys
