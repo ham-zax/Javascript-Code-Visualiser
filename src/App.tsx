@@ -424,6 +424,29 @@ function App() {
   const derivedHighlightLine = useMemo(() => deriveHighlightedLine(events, idx), [events, idx]);
   // NOTE: derivedHighlightLine is now { nextLine, prevLine }
 
+  // 6. Derived Persistent Environments
+  const persistentEnvironments = useMemo(() => {
+    const activeScopeIds = new Set(derivedCallStack.map(frame => frame.scopeId));
+    activeScopeIds.add("global"); // Global scope is always considered "active" in a sense
+
+    const persistent: DisplayScopeInfo[] = [];
+
+    Object.values(derivedHeapObjects).forEach(heapObj => {
+      if (heapObj.type === 'function' && heapObj.definingScopeId) {
+        if (!activeScopeIds.has(heapObj.definingScopeId)) {
+          const scope = derivedScopesRecord[heapObj.definingScopeId];
+          // Ensure the scope exists and isn't already added (though duplicates are unlikely here)
+          if (scope && !persistent.some(p => p.scopeId === scope.scopeId)) {
+            persistent.push(scope);
+          }
+        }
+      }
+    });
+
+    return persistent;
+  }, [derivedCallStack, derivedHeapObjects, derivedScopesRecord]);
+
+
   // --- WebSocket Logic ---
   const [ws, setWs] = useState<WebSocket | null>(null);
 
@@ -538,7 +561,7 @@ function App() {
 
           {/* Col 2: Visualization & Explanation */}
           <div className="space-y-6">
-            <VisualizationState callStack={derivedCallStack} scopes={derivedScopesArray} heapObjects={derivedHeapObjects} />
+            <VisualizationState callStack={derivedCallStack} scopes={derivedScopesArray} heapObjects={derivedHeapObjects} persistentEnvironments={persistentEnvironments} />
             <ConsolePane lines={derivedConsole} />
             {/* <ExplanationOutput explanation={derivedExplanation} consoleOutput={derivedConsole} /> */}
           </div>

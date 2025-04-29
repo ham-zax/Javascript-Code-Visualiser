@@ -56,3 +56,36 @@ export interface DisplayScopeInfo {
 export interface ScopeNode extends DisplayScopeInfo {
   children: ScopeNode[];
 }
+
+// Types for React Flow Custom Nodes
+
+export type PrimitiveValue = string | number | boolean | null | undefined | symbol | bigint;
+
+export type Variable =
+  | { type: 'primitive'; value: PrimitiveValue }
+  | { type: 'reference'; heapId: string }
+  | { type: 'function'; name?: string; heapId: string }; // Functions are also on the heap
+
+export interface FrameData {
+  name: string;
+  variables: Record<string, Variable>;
+  // Add other frame-specific data if needed
+}
+
+export interface HeapObjectData {
+  id: string;
+  type: 'object' | 'array' | 'function';
+  properties?: Record<string, Variable>; // For objects and arrays with string keys
+  value?: PrimitiveValue[]; // For simple arrays
+  functionDetails?: {
+      name?: string;
+      paramCount: number;
+      // codeSnippet?: string; // Maybe add later
+  };
+  closureScopeId?: string; // Link to persistent env for closures
+}
+
+export interface PersistentEnvData {
+    name: string; // e.g., "Closure Scope (foo)", "Global Scope"
+    variables: Record<string, Variable>;
+}
