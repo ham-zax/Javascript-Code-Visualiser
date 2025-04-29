@@ -1,69 +1,63 @@
-const WebSocket = require('ws');
+const babel = require('@babel/core');
 const fs = require('fs');
 const path = require('path');
 
-// const testFilePath = path.join(__dirname, 'tdz_test.js');
-const serverUrl = 'ws://localhost:8080/ws'; // Default port with WS path
+// Import the plugins (adjust paths if necessary, assuming run_test.js is in backend/test/)
+const { traceScopePlugin: traceScope } = require('../src/worker/traceScope'); // Destructure the plugin function
+const traceFunctions = require('../src/worker/traceFunctions');
+const traceVariables = require('../src/worker/traceVariables'); // The modified one
+const traceLines = require('../src/worker/traceLines');
+// preserveLoc might be needed depending on the exact setup, include it for safety
+const preserveLoc = require('../src/worker/preserveLoc');
+
+const testFilePath = path.join(__dirname, 'temp_counter_test.js');
 
 try {
-  // const codeContent = fs.readFileSync(testFilePath, 'utf8');
-  // console.log(`Read test file: ${testFilePath}`);
+  const codeContent = fs.readFileSync(testFilePath, 'utf8');
+  console.log(`Read test file: ${testFilePath}`);
+  console.log('--- Original Code ---');
+  console.log(codeContent);
+  console.log('---------------------\n');
 
-  const codeContent = `function createCounter() {
-    let count = 0;
-    return function() {
-      count++;
-      console.log(count);
-    };
-  }
+  console.log('Applying Babel transformations...');
 
-  const myCounter = createCounter();
-
-  myCounter(); // Output: 1
-  myCounter(); // Output: 2`;
-  console.log('Using hardcoded createCounter test code.');
-
-  const ws = new WebSocket(serverUrl);
-
-  ws.on('open', () => {
-    console.log(`Connected to WebSocket server at ${serverUrl}`);
-    const message = {
-      type: 'RUN_CODE',
-      payload: {
-        code: codeContent
-      }
-    };
-    console.log('Sending RUN_CODE message...');
-    ws.send(JSON.stringify(message));
-  });
-
-  ws.on('message', (data) => {
-    console.log('Received from server:');
-    try {
-      const parsedData = JSON.parse(data);
-      console.log(JSON.stringify(parsedData, null, 2)); // Pretty print JSON
-
-      // Close connection after receiving the expected list or an error
-      if (parsedData.type === 'STORY_LIST' || parsedData.type === 'EVENT_LIST' || parsedData.type === 'EXECUTION_ERROR') {
-        console.log('Received final response. Closing connection.');
-        ws.close();
-      }
-    } catch (e) {
-      console.log(data.toString()); // Print raw data if not JSON
+  // Define the plugin pipeline in the correct order
+  const babelOptions = {
+    plugins: [
+      // preserveLoc should ideally run first if needed to store original locations
+      preserveLoc,
+      traceScope,
+      traceFunctions,
+      traceVariables, // Use the modified version
+      traceLines,
+    ],
+    ast: true, // Request the AST to be generated
+    generatorOpts: { // Optional: Improve readability of generated code
+        retainLines: false,
+        compact: false,
+        concise: false,
+        comments: true, // Keep comments if any were added/preserved
     }
-  });
+  };
 
-  ws.on('close', (code, reason) => {
-    console.log(`WebSocket connection closed. Code: ${code}, Reason: ${reason ? reason.toString() : 'N/A'}`);
-    process.exit(0); // Exit script cleanly
-  });
+  // Perform the transformation
+  const result = babel.transformSync(codeContent, babelOptions);
 
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
-    process.exit(1); // Exit script with error code
-  });
+  console.log('--- Final Generated Code ---');
+  console.log(result.code);
+  console.log('--------------------------\n');
+
+  console.log('--- Final AST ---');
+  // Pretty print the AST object
+  console.log(JSON.stringify(result.ast, null, 2));
+  console.log('-----------------\n');
+
+  console.log('Transformation complete. Final code and AST printed above.');
 
 } catch (err) {
-  console.error(`Error reading test file or setting up test runner: ${err}`);
+  console.error(`Error during Babel transformation or file reading: ${err}`);
+  console.error(err.stack); // Print stack trace for better debugging
   process.exit(1);
 }
+
+process.exit(0); // Exit cleanly

@@ -1,11 +1,6 @@
-module.exports = function traceVariables({ types: t }) {
-  const SKIP = new Set(["Tracer", "nextId", "console", "_", "lodash", "fetch"]);
-  const ALREADY = Symbol("varAccessInstrumented");
-
-  return {
-    visitor: {
-      // Wrap the RHS of x = expr as x = Tracer.varWrite("x", expr)
-      AssignmentExpression(path) {
+const traceVariablesVisitor = {
+    // Wrap the RHS of x = expr as x = Tracer.varWrite("x", expr)
+    AssignmentExpression(path) {
 console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${JSON.stringify(path.node.loc)}`);
         // Prevent infinite recursion if the RHS is already a Tracer call
         if (path.get("right").isCallExpression() &&
@@ -81,16 +76,20 @@ console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${J
           else valueType = path.node.right.type || "unknown";
         }
 
+        // Get line number
+        const line = path.node.loc ? path.node.loc.start.line : -1; // Add line number
+
         const newRight = t.callExpression(
           t.memberExpression(t.identifier("Tracer"), t.identifier("varWrite")),
           [
             t.stringLiteral(scopeId),
             t.stringLiteral(name),
             path.node.right,
-            t.stringLiteral(valueType)
+            t.stringLiteral(valueType),
+            t.numericLiteral(line) // Add line number argument
           ]
         );
-        console.log(`[traceVariables] AssignmentExpression: Created newRight (Tracer.varWrite call) for ${name}:`, newRight);
+        console.log(`[traceVariables] AssignmentExpression: Created newRight (Tracer.varWrite call) for ${name} at line ${line}:`, newRight);
         // Mark the new node to prevent re-instrumentation if traversal restarts
         newRight[ALREADY] = true;
         console.log(`[traceVariables] AssignmentExpression: Attempting path.get("right").replaceWith(newRight) for ${name}`);
@@ -396,5 +395,18 @@ if (binding) {
         // path.skip(); // Skip further traversal on the replaced node
       }
     }
+};
+
+const traceVariablesPlugin = function traceVariables({ types: t }) {
+  const SKIP = new Set(["Tracer", "nextId", "console", "_", "lodash", "fetch"]);
+  const ALREADY = Symbol("varAccessInstrumented"); // Keep symbol local to plugin instance if needed
+
+  return {
+    visitor: traceVariablesVisitor // Use the extracted visitor
   };
+};
+
+module.exports = {
+    traceVariablesPlugin,
+    traceVariablesVisitor
 };

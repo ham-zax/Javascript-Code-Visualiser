@@ -1,21 +1,31 @@
 // backend/src/worker/traceScope.js
-module.exports = function traceScope({ types: t }) {
-  const ALREADY = Symbol("scopeInstrumented");
-  const SKIP_NAMES = new Set([
+// Define constants and helpers outside the main plugin function
+const SCOPE_INSTRUMENTED = Symbol("scopeInstrumented"); // Renamed from ALREADY and moved
+const SKIP_NAMES = new Set([
     "Tracer", "nextId", "console",
     "arguments", "this",       // skip built-ins
     "_", "lodash", "fetch"
   ]);
 
+// Helper function to generate unique IDs
+function generateUniqueId(prefix = 'id-') {
+    // Assuming nextId is globally available or passed in somehow.
+    // Fallback to random number if nextId isn't available.
+    const uniquePart = typeof nextId === 'function' ? nextId() : Math.floor(Math.random() * 1000000);
+    return `${prefix}${uniquePart}`;
+}
+
+
+const traceScopePlugin = function traceScope({ types: t }) {
   return {
     visitor: {
       Function(path) {
         // --- guard: only instrument once ---
-        if (path.node[ALREADY]) return;
-        path.node[ALREADY] = true;
+        if (path.node[SCOPE_INSTRUMENTED]) return; // Use exported constant
+        path.node[SCOPE_INSTRUMENTED] = true;     // Use exported constant
 
         // --- Generate unique scopeId for this function ---
-        const scopeId = path.scope.generateUidIdentifier("funcScopeId").name + '-' + (typeof nextId === 'function' ? nextId() : Math.floor(Math.random() * 100000));
+        const scopeId = generateUniqueId('funcScopeId-'); // Use helper function
         path.scope.data = path.scope.data || {};
         path.node._funcScopeId = scopeId; // Attach ID to the node
 console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', scopeId, 'NodeID:', path.node._funcScopeId);
@@ -46,7 +56,7 @@ console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', 
             ]
           )
         );
-        captureLocalsStmt[ALREADY] = true;
+        captureLocalsStmt[SCOPE_INSTRUMENTED] = true; // Use exported constant
 
         // Ensure body is a BlockStatement
         if (!t.isBlockStatement(path.node.body)) {
@@ -72,7 +82,7 @@ console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', 
             if (SKIP_NAMES.has(name)) return;
 
             // Avoid instrumentation of our own captureLocals or captureClosure AST
-            if (idPath.node[ALREADY]) return;
+            if (idPath.node[SCOPE_INSTRUMENTED]) return; // Use exported constant
 
             // Find the binding (if any)
             const binding = idPath.scope.getBinding(name);
@@ -100,7 +110,7 @@ console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', 
         if (closureProps.length > 0) {
           console.log('[traceScope Function Visitor] Condition (closureProps.length > 0) met:', closureProps.length > 0);
           // Generate an ID for this function’s closure
-          const closureId = "closure-" + (typeof nextId === 'function' ? nextId() : Math.floor(Math.random() * 100000));
+          const closureId = generateUniqueId('closure-'); // Use helper function
           const captureClosureStmt = t.expressionStatement(
             t.callExpression(
               t.memberExpression(t.identifier("Tracer"), t.identifier("captureClosure")),
@@ -112,7 +122,7 @@ console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', 
             )
           );
           console.log('[traceScope Function Visitor] Created captureClosureStmt AST node:', captureClosureStmt);
-          captureClosureStmt[ALREADY] = true;
+          captureClosureStmt[SCOPE_INSTRUMENTED] = true; // Use exported constant
 
           // Insert *after* the function declaration
           const stmtParent = path.getStatementParent();
@@ -124,4 +134,11 @@ console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', 
       }
     }
   };
+};
+
+// Export the plugin function and the helpers/constants
+module.exports = {
+    traceScopePlugin,
+    generateUniqueId,
+    SCOPE_INSTRUMENTED
 };

@@ -1,4 +1,6 @@
 // backend/src/worker/traceFunctions.js
+const { generateUniqueId, SCOPE_INSTRUMENTED } = require('./traceScope'); // Import from traceScope
+
 module.exports = function traceFunctions({ types: t }) {
   const FUNCTION_TRACED = Symbol("functionTraced");
   const isTraceableFunction = (path) =>
@@ -275,6 +277,21 @@ module.exports = function traceFunctions({ types: t }) {
             traceIdIdentifier = t.identifier("_traceId"); // Very risky fallback
             console.warn(`[traceFunctions ReturnStatement] Falling back to risky identifier: ${traceIdIdentifier.name}`);
         }
+
+        // --- Manually instrument scope for returned functions ---
+        // const originalArgument = path.node.argument; // REMOVED - Already declared earlier in this visitor
+        if (originalArgument && (t.isFunctionExpression(originalArgument) || t.isArrowFunctionExpression(originalArgument))) {
+            if (!originalArgument[SCOPE_INSTRUMENTED]) {
+                const funcScopeId = generateUniqueId('_funcScopeId-');
+                originalArgument._funcScopeId = funcScopeId;
+                originalArgument[SCOPE_INSTRUMENTED] = true;
+                console.log(`[traceFunctions ReturnStatement] Manually added scope ID ${funcScopeId} to returned function.`);
+            } else {
+                 console.log(`[traceFunctions ReturnStatement] Returned function already has scope instrumentation.`);
+            }
+        }
+        // --- End manual instrumentation ---
+
         // 4. Create the specific Tracer.exitFunc call
         const exitCallSpecific = t.expressionStatement(
             t.callExpression(
@@ -306,9 +323,34 @@ module.exports = function traceFunctions({ types: t }) {
 
         // 7. Replace the original ReturnStatement path
         try {
-            path.replaceWith(replacementBlock);
+            const newPaths = path.replaceWith(replacementBlock); // Get path(s) to the new block
             console.log(`[traceFunctions] Replaced ReturnStatement with block at line: ${path.node?.loc?.start.line || 'unknown'}`);
-            path.skip(); // Prevent re-visiting the nodes within the new block immediately
+
+            // --- Explicitly traverse returned function body ---
+            // Check if the original argument was a function expression
+            if (originalArgument && (t.isFunctionExpression(originalArgument) || t.isArrowFunctionExpression(originalArgument))) {
+                console.log("[traceFunctions ReturnStatement] Original return value was a function. Attempting to requeue...");
+                // Find the path to the FunctionExpression within the new block.
+                // It's the init value of the tempVarDecl (the first statement).
+                const blockPath = Array.isArray(newPaths) ? newPaths[0] : path; // Use path if replaceWith doesn't return array
+                const tempVarDeclPath = blockPath.get('body.0');
+                if (tempVarDeclPath && tempVarDeclPath.isVariableDeclaration()) {
+                    const funcExprPath = tempVarDeclPath.get('declarations.0.init');
+                    if (funcExprPath && (funcExprPath.isFunctionExpression() || funcExprPath.isArrowFunctionExpression())) {
+                        // --- Requeue the FunctionExpression path ---
+                        console.log("[traceFunctions ReturnStatement] Requeuing FunctionExpression path.");
+                        funcExprPath.requeue();
+                        // --- End requeue ---
+                    } else {
+                         console.warn("[traceFunctions ReturnStatement] Could not find FunctionExpression path in tempVarDecl for requeue.");
+                    }
+                } else {
+                     console.warn("[traceFunctions ReturnStatement] Could not find tempVarDecl path for requeue.");
+                }
+            }
+            // --- End explicit traversal ---
+
+            path.skip(); // Prevent re-visiting the nodes within the *replacement block* itself immediately
         } catch (e) {
             console.error(`[traceFunctions] !!!!! ERROR during ReturnStatement replacement !!!!!`, e);
             console.error(`[traceFunctions] Error occurred on ReturnStatement at line: ${path.node?.loc?.start.line || 'unknown'}`);
