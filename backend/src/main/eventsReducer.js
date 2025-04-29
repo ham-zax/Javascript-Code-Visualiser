@@ -193,7 +193,9 @@ const reduceEvents = (events) => {
   ]);
 
   console.log('[reduceEvents] raw before filter:', raw);
+console.log('[reduceEvents] Event types before filter:', raw.map(e => e.type));
   const filteredRaw = raw.filter(evt => WHITELIST.has(evt.type));
+console.log('[reduceEvents] Event types after filter:', filteredRaw.map(e => e.type));
   console.log('[reduceEvents] raw after filter:', filteredRaw);
   return filteredRaw;
 };

@@ -213,15 +213,20 @@ const Tracer = {
     }
   }),
 
-  exitFunc: (id, name, start, end, exitingScopeId, returnValue, returnLine) => postEvent({
-    type: "ExitFunction",
-    payload: {
-      id, name, start, end,
+  exitFunc: (id, name, start, end, exitingScopeId, returnValue, returnLine) => {
+    // Task 3.2: Log the return value for inspection
+    console.log(`[Tracer.exitFunc] id: ${id}, name: ${name}, returnValue:`, returnValue);
+    console.log('[Worker Tracer.exitFunc] Received returnValue:', prettyFormat(returnValue));
+    postEvent({
+      type: "ExitFunction",
+      payload: {
+        id, name, start, end,
       exitingScopeId,
       returnValue,
       returnLine
-    }
-  }),
+      }
+    });
+  },
 
   errorFunc: (message, id, name, start, end) => postEvent({
     type: "ErrorFunction",
@@ -250,6 +255,8 @@ const Tracer = {
 
   // Enhanced variable tracking
   varWrite: (scopeId, name, val, valueType) => {
+    console.log(`[Tracer.varWrite] Called with: scopeId=${scopeId}, name=${name}, val=`, val, `, valueType=${valueType}`); // Log entry and args
+    console.log(`[Tracer.varWrite] Calling postEvent for VarWrite`);
     postEvent({
       type: "VarWrite",
       payload: {
@@ -259,6 +266,7 @@ const Tracer = {
         valueType
       }
     });
+    console.log(`[Tracer.varWrite] postEvent called successfully`);
     return val;
   },
   varRead: (name, val) => {
@@ -271,10 +279,12 @@ const Tracer = {
 
   // Enhanced closure capture
   captureClosure: (closureId, parentId, bindings) => {
+console.log('[Worker Tracer.captureClosure] Called with closureId:', closureId, 'parentId:', parentId, 'bindings:', bindings);
     const displayBindings = {};
     for (const key in bindings) {
       displayBindings[key] = prettyFormat(bindings[key]);
     }
+console.log('[Worker Tracer.captureClosure] Posting Closure event:', { type: 'Closure', payload: { closureId, parentId, bindings: displayBindings } });
     postEvent({
       type: "Closure",
       payload: { closureId, parentId, bindings: displayBindings }

@@ -22,26 +22,40 @@ function storyReducer(rawEvents) {
   // Helper to build scopes snapshot for STEP_LINE
   function buildScopesSnapshot() {
     console.log('[storyReducer] Building scope snapshot. Current stack: ' + scopeStack.join(','));
-    const snapshot = scopeStack
+    const visibleScopeIds = new Set();
+    const scopesToProcess = [...scopeStack]; // Start with scopes on the stack
+
+    while (scopesToProcess.length > 0) {
+      const currentId = scopesToProcess.shift(); // Process like a queue
+
+      if (!currentId || visibleScopeIds.has(currentId)) {
+        continue; // Skip null/undefined or already processed scopes
+      }
+
+      visibleScopeIds.add(currentId);
+      const scope = activeScopes[currentId];
+
+      if (scope && scope.parentId) {
+        scopesToProcess.push(scope.parentId); // Add parent to process ancestors
+      }
+      // Also consider adding persistent scopes that might not be direct ancestors?
+      // For now, stick to stack + ancestors as per initial plan.
+    }
+
+    const snapshot = Array.from(visibleScopeIds)
       .map(function(scopeId) {
         var s = activeScopes[scopeId];
         if (!s) {
-          console.warn('[storyReducer] Scope ID ' + scopeId + ' not found in activeScopes!');
+          console.warn('[storyReducer] Snapshot: Scope ID ' + scopeId + ' not found in activeScopes!');
           return null;
         }
-        var clonedVariables = cloneVars(s.variables);
-        return {
-          scopeId: s.scopeId,
-          type: s.type,
-          name: s.name,
-          variables: clonedVariables,
-          parentId: s.parentId,
-          isPersistent: !!s.isPersistent,
-          thisBinding: s.thisBinding == null ? null : s.thisBinding
-        };
+        // Deep clone the entire scope object for the snapshot
+        return JSON.parse(JSON.stringify(s));
       })
-      .filter(Boolean);
-    console.log('[storyReducer] Built snapshot: ' + JSON.stringify(snapshot, null, 2));
+      .filter(Boolean); // Remove any nulls from scopes not found
+
+    // Task 4.1: Log detailed snapshot structure
+    console.log('[storyReducer] Built snapshot with ' + snapshot.length + ' scopes: ' + JSON.stringify(snapshot, null, 2));
     return snapshot;
   }
 
@@ -84,34 +98,32 @@ function storyReducer(rawEvents) {
             var v = locals[k];
             activeScopes[scopeId].variables[k] = { value: v, type: typeof v };
           }
+          // Task 4.1: Log created scope object
+          console.log('[storyReducer] Created/Updated scope object:', JSON.stringify(activeScopes[scopeId], null, 2));
           scopeStack.push(scopeId);
           console.log('[storyReducer] Added scope ' + scopeId + '. Stack: ' + scopeStack.join(','));
           break;
         }
         case 'Closure': {
-          var closureId = evt.payload.closureId;
-          var parentId2 = evt.payload.parentId;
-          var bindings = evt.payload.bindings;
-          if (!closureId) {
-            console.error('[storyReducer] ERROR: Closure event missing closureId!');
-            break;
+          // Task 2.3: Mark the PARENT scope as persistent
+          var parentId = evt.payload.parentId; // Renamed from parentId2 for clarity
+          var closureId = evt.payload.closureId; // Keep for logging if needed
+          // var bindings = evt.payload.bindings; // Bindings are not directly used here anymore
+
+          if (!parentId) {
+             console.warn('[storyReducer] Closure event for ' + closureId + ' missing parentId! Cannot mark persistent.');
+             break;
           }
-          console.log('[storyReducer] Handling Closure for scope ' + closureId + ', parent ' + parentId2);
-          activeScopes[closureId] = {
-            scopeId: closureId,
-            type: 'closure',
-            name: closureId,
-            variables: {},
-            parentId: parentId2,
-            isPersistent: true,
-            thisBinding: null
-          };
-          for (var b in bindings) {
-            var bv = bindings[b];
-            activeScopes[closureId].variables[b] = { value: bv, type: typeof bv };
+
+          console.log('[storyReducer] Handling Closure event, marking parent scope ' + parentId + ' as persistent.');
+          const parentScope = activeScopes[parentId];
+          if (parentScope) {
+            parentScope.isPersistent = true;
+            console.log('[storyReducer] Marked parent scope ' + parentId + ' as persistent.');
+          } else {
+            console.warn('[storyReducer] Closure: Parent scope ' + parentId + ' not found in activeScopes! Cannot mark persistent.');
           }
-          scopeStack.push(closureId);
-          console.log('[storyReducer] Added closure scope ' + closureId + '. Stack: ' + scopeStack.join(','));
+          // Do NOT create a new scope object for the closure itself or push it onto the stack.
           break;
         }
         case 'VarWrite': {
@@ -129,6 +141,8 @@ function storyReducer(rawEvents) {
             activeScopes[sid] = { scopeId: sid, type: 'unknown', name: sid, variables: {}, parentId: null, isPersistent: false, thisBinding: null };
           }
           activeScopes[sid].variables[name] = { value: val, type: vtype };
+          // Task 4.1: Log updated variable object
+          console.log(`[storyReducer] Updated variable '${name}' in scope '${sid}':`, JSON.stringify(activeScopes[sid].variables[name], null, 2));
           story.push({
             type: 'ASSIGN',
             payload: {

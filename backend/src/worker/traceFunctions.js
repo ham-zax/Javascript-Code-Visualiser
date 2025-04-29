@@ -129,11 +129,12 @@ module.exports = function traceFunctions({ types: t }) {
         // 5. Create the try/catch/finally structure (Copied from user feedback)
         const currentBodyBlock = functionBodyPath.node;
         const catchClause = t.catchClause(errorParam, t.blockStatement([errorCall, throwStmt]));
-        const finallyBlock = t.blockStatement([exitCall]);
+        // Remove exitCall from finally, it will be handled by ReturnStatement visitor
+        const finallyBlock = t.blockStatement([]); // Empty finally for now
         const tryCatchFinally = t.tryStatement(
           currentBodyBlock,
           catchClause,
-          finallyBlock
+          finallyBlock // Now potentially empty
         );
 
         // Duplicated block removed
@@ -170,6 +171,106 @@ module.exports = function traceFunctions({ types: t }) {
             console.error(`[traceFunctions] Error occurred on node type: ${path.node.type}, name: ${fnName}`);
         }
       },
+
+      ReturnStatement(path) {
+        // Ensure this return is directly within a function we've instrumented, not a nested one.
+        const funcPath = path.getFunctionParent();
+        if (!funcPath || !funcPath.isFunction() || !funcPath.node?.body?.[FUNCTION_TRACED]) {
+            // If the parent function's body wasn't marked by our Function visitor, skip.
+            // This check might need refinement depending on exact visitor order and marking strategy.
+            // console.log("[traceFunctions] Skipping ReturnStatement in non-instrumented/nested function.");
+            return;
+        }
+
+        console.log(`[traceFunctions] Instrumenting ReturnStatement at line: ${path.node.loc?.start.line}`);
+
+        // 1. Capture original return value and line
+        const originalArgument = path.node.argument;
+        const returnLine = path.node.loc ? t.numericLiteral(path.node.loc.start.line) : t.nullLiteral();
+
+        // 2. Create temporary variable
+        const tempVarId = path.scope.generateUidIdentifier("_tempReturnValue");
+        const tempVarDecl = t.variableDeclaration("const", [
+            t.variableDeclarator(
+                tempVarId,
+                originalArgument ? t.cloneNode(originalArgument) : t.identifier('undefined') // Clone to avoid issues
+            )
+        ]);
+        t.inherits(tempVarDecl, path.node); // Attempt to copy location
+
+        // 3. Re-gather info needed for Tracer.exitFunc
+        // traceId should be in scope from the Function visitor's newBody
+        const traceIdIdentifier = t.identifier("traceId"); // Assume it's accessible
+
+        let fnName = 'anonymous';
+        if (funcPath.node.id) {
+            fnName = funcPath.node.id.name;
+        } else if (funcPath.parentPath.isVariableDeclarator() && funcPath.parentPath.get('id').isIdentifier()) {
+            fnName = funcPath.parentPath.get('id').node.name;
+        } else if (funcPath.parentPath.isObjectProperty() && funcPath.parentPath.get('key').isIdentifier()) {
+           fnName = funcPath.parentPath.get('key').node.name;
+        } else if (funcPath.parentPath.isClassMethod()) {
+           fnName = funcPath.parentPath.get('key').node.name;
+        }
+        const start = funcPath.node.loc ? t.numericLiteral(funcPath.node.loc.start.line) : t.nullLiteral();
+        const end = funcPath.node.loc ? t.numericLiteral(funcPath.node.loc.end.line) : t.nullLiteral();
+
+        // Scope ID lookup (might need improvement for complex cases)
+        let scopeId = "global";
+        let currentScope = path.scope;
+        while (currentScope) {
+            if (currentScope.data && currentScope.data.scopeId) {
+                scopeId = currentScope.data.scopeId;
+                break;
+            }
+            if (currentScope.path === funcPath) break; // Stop at function boundary
+            currentScope = currentScope.parent;
+        }
+         if (scopeId === "global" && funcPath.scope?.data?.scopeId) { // Fallback to function scope if needed
+             scopeId = funcPath.scope.data.scopeId;
+         }
+
+
+        // 4. Create the specific Tracer.exitFunc call
+        const exitCallSpecific = t.expressionStatement(
+            t.callExpression(
+                t.memberExpression(t.identifier("Tracer"), t.identifier("exitFunc")),
+                [
+                    traceIdIdentifier,
+                    t.stringLiteral(fnName),
+                    start,
+                    end,
+                    t.stringLiteral(scopeId), // exitingScopeId
+                    tempVarId, // The captured return value
+                    returnLine // Line of the original return statement
+                ]
+            )
+        );
+        t.inherits(exitCallSpecific, path.node); // Attempt to copy location
+
+        // 5. Create the new return statement
+        const newReturnStmt = t.returnStatement(tempVarId);
+        t.inherits(newReturnStmt, path.node); // Attempt to copy location
+
+        // 6. Create the replacement block
+        const replacementBlock = t.blockStatement([
+            tempVarDecl,
+            exitCallSpecific,
+            newReturnStmt
+        ]);
+        t.inherits(replacementBlock, path.node); // Attempt to copy location
+
+        // 7. Replace the original ReturnStatement path
+        try {
+            path.replaceWith(replacementBlock);
+            console.log(`[traceFunctions] Replaced ReturnStatement with block at line: ${path.node?.loc?.start.line || 'unknown'}`);
+            path.skip(); // Prevent re-visiting the nodes within the new block immediately
+        } catch (e) {
+            console.error(`[traceFunctions] !!!!! ERROR during ReturnStatement replacement !!!!!`, e);
+            console.error(`[traceFunctions] Error occurred on ReturnStatement at line: ${path.node?.loc?.start.line || 'unknown'}`);
+        }
+      },
+
       // Add Program.exit to see if the visitor ran at all during the file processing
       Program: {
           exit() {

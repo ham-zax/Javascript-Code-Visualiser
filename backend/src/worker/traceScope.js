@@ -88,13 +88,16 @@ module.exports = function traceScope({ types: t }) {
           // Don’t descend into nested functions
           Function(inner) { inner.skip(); }
         });
+        console.log('[traceScope Function Visitor] Identified freeNames:', freeNames);
 
         // Build closure‐capture only if we found any true frees
         const closureProps = Array.from(freeNames)
           .map(name =>
             t.objectProperty(t.identifier(name), t.identifier(name), false, true)
           );
+       console.log('[traceScope Function Visitor] Generated closureProps:', closureProps);
         if (closureProps.length > 0) {
+          console.log('[traceScope Function Visitor] Condition (closureProps.length > 0) met:', closureProps.length > 0);
           // Generate an ID for this function’s closure
           const closureId = "closure-" + (typeof nextId === 'function' ? nextId() : Math.floor(Math.random() * 100000));
           const captureClosureStmt = t.expressionStatement(
@@ -107,12 +110,14 @@ module.exports = function traceScope({ types: t }) {
               ]
             )
           );
+          console.log('[traceScope Function Visitor] Created captureClosureStmt AST node:', captureClosureStmt);
           captureClosureStmt[ALREADY] = true;
 
           // Insert *after* the function declaration
           const stmtParent = path.getStatementParent();
           if (stmtParent) {
             stmtParent.insertAfter(captureClosureStmt);
+            console.log('[traceScope Function Visitor] Executed stmtParent.insertAfter(captureClosureStmt)');
           }
         }
       }
