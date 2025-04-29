@@ -11,6 +11,7 @@ const { traceVariablesPlugin: traceVariables } = require('../src/worker/traceVar
 const traceLines = require('../src/worker/traceLines');
 // preserveLoc might be needed depending on the exact setup, include it for safety
 const preserveLoc = require('../src/worker/preserveLoc');
+const { storyReducer, initialState: initialStoryState } = require('../src/main/storyReducer'); // Import storyReducer
 
 const testFilePath = path.join(__dirname, 'temp_counter_test.js');
 
@@ -31,7 +32,7 @@ try {
       traceScope,
       traceVariables, // Use the modified version
       traceFunctions,
-      traceLines,
+      [traceLines, { originalSource: codeContent }], // Pass original source to traceLines
     ],
     ast: true, // Request the AST to be generated
     generatorOpts: { // Optional: Improve readability of generated code
@@ -143,8 +144,23 @@ try {
           stack: runtimeError.stack
       });
     }
-  
-  
+
+    // --- Process events with storyReducer ---
+    console.log('\nProcessing events with storyReducer...');
+    let finalStoryList;
+    try {
+        // Call storyReducer once with the initial state and the full events log
+        finalStoryList = storyReducer(initialStoryState, eventsLog);
+        console.log('--- Final STORY_LIST ---');
+        console.log(JSON.stringify(finalStoryList, null, 2));
+        console.log('------------------------');
+    } catch (reducerError) {
+        console.error('\n--- Error during storyReducer processing ---');
+        console.error(reducerError);
+        console.error('------------------------------------------\n');
+    }
+
+
   } catch (err) {
     console.error(`Error during Babel transformation, file reading, or execution: ${err}`);
   console.error(err.stack); // Print stack trace for better debugging

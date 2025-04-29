@@ -1,10 +1,14 @@
 // Transforms raw pipeline events into high-level story events per EVENT_SCHEMA.md
-function storyReducer(rawEvents) {
-  console.log('[storyReducer] Received raw events: ' + JSON.stringify(rawEvents, null, 2));
+// Transforms raw pipeline events into high-level story events per EVENT_SCHEMA.md
+// Accepts initial state (though currently re-initializes internally) and the array of raw events
+function storyReducer(initialState, rawEvents) { // Accept two arguments
+  console.log('[storyReducer] Received raw events array (length ' + (rawEvents ? rawEvents.length : 'undefined') + ')'); // Log length safely
   const story = [];
+  // TODO: Refactor to use initialState properly instead of re-initializing here
   const activeScopes = {}; // scopeId -> scope object
   const scopeStack = ['global'];
   let nextScopeIdCounter = 0;
+  const pendingPersistence = new Set(); // Store scope IDs needing persistence
 
   // Helper to deep clone variables for snapshotting
   function cloneVars(vars) {
@@ -115,13 +119,14 @@ function storyReducer(rawEvents) {
              break;
           }
 
-          console.log('[storyReducer] Handling Closure event, marking parent scope ' + parentId + ' as persistent.');
+          console.log('[storyReducer] Handling Closure event for parent scope ' + parentId);
           const parentScope = activeScopes[parentId];
           if (parentScope) {
             parentScope.isPersistent = true;
             console.log('[storyReducer] Marked parent scope ' + parentId + ' as persistent.');
           } else {
-            console.warn('[storyReducer] Closure: Parent scope ' + parentId + ' not found in activeScopes! Cannot mark persistent.');
+            console.warn('[storyReducer] Closure: Parent scope ' + parentId + ' not found yet. Adding to pendingPersistence.');
+            pendingPersistence.add(parentId); // Mark for persistence later
           }
           // Do NOT create a new scope object for the closure itself or push it onto the stack.
           break;
