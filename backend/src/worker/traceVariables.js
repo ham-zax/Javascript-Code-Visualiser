@@ -218,6 +218,13 @@ console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${J
         const name = idNode.name;
         console.log(`[traceVariables] VariableDeclarator: Considering id.name = ${name}`);
 
+        // --- Skip internal trace IDs ---
+        if (name.startsWith('_traceId')) {
+          console.log(`[traceVariables] VariableDeclarator: Skipping internal trace variable ${name}`);
+          return;
+        }
+        // --- End skip internal trace IDs ---
+
         if (SKIP.has(name)) {
           console.log(`[traceVariables] VariableDeclarator: SKIP_NAMES check PASSED for ${name}`);
           return;

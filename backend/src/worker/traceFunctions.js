@@ -176,7 +176,7 @@ module.exports = function traceFunctions({ types: t }) {
         }
       },
 
-      ReturnStatement(path) {
+      ReturnStatement(path, state) {
         // Ensure this return is directly within a function we've instrumented, not a nested one.
         const funcPath = path.getFunctionParent();
         if (!funcPath || !funcPath.isFunction() || !funcPath.node?.body?.[FUNCTION_TRACED]) {
@@ -219,22 +219,40 @@ module.exports = function traceFunctions({ types: t }) {
         const start = funcPath.node.loc ? t.numericLiteral(funcPath.node.loc.start.line) : t.nullLiteral();
         const end = funcPath.node.loc ? t.numericLiteral(funcPath.node.loc.end.line) : t.nullLiteral();
 
-        // Scope ID lookup (might need improvement for complex cases)
-        let scopeId = "global";
-        let currentScope = path.scope;
-        while (currentScope) {
-            if (currentScope.data && currentScope.data.scopeId) {
-                scopeId = currentScope.data.scopeId;
-                break;
+        // --- Correct Scope ID Lookup ---
+        // Get the scope ID directly from the function node property set by traceScope.js
+        let scopeId = "global"; // Default
+        let foundScope = false;
+        if (funcPath && funcPath.node && funcPath.node._funcScopeId) {
+            scopeId = funcPath.node._funcScopeId;
+            foundScope = true;
+            console.log(`[traceFunctions ReturnStatement] Found scopeId '${scopeId}' on funcPath.node._funcScopeId`);
+        } else {
+            // Traverse up the scope chain to find a parent function node with _funcScopeId
+            let parentScope = funcPath && funcPath.scope ? funcPath.scope.parent : null;
+            while (parentScope) {
+                if (
+                    parentScope.block &&
+                    (parentScope.block.type === "FunctionDeclaration" ||
+                     parentScope.block.type === "FunctionExpression" ||
+                     parentScope.block.type === "ArrowFunctionExpression") &&
+                    parentScope.block._funcScopeId
+                ) {
+                    scopeId = parentScope.block._funcScopeId;
+                    foundScope = true;
+                    console.log(`[traceFunctions ReturnStatement] Found scopeId '${scopeId}' on parentScope.block._funcScopeId`);
+                    break;
+                }
+                parentScope = parentScope.parent;
             }
-            if (currentScope.path === funcPath) break; // Stop at function boundary
-            currentScope = currentScope.parent;
+            if (!foundScope) {
+                console.warn(`[traceFunctions ReturnStatement] Could not find _funcScopeId on funcPath node or any parent function node for ${fnName}. Defaulting to 'global'. funcPath node:`, funcPath?.node);
+            }
         }
-         if (scopeId === "global" && funcPath.scope?.data?.scopeId) { // Fallback to function scope if needed
-             scopeId = funcPath.scope.data.scopeId;
-         }
+        console.log(`[traceFunctions ReturnStatement] Using exitingScopeId: ${scopeId} for function: ${fnName}`);
+        // --- End Correct Scope ID Lookup ---
 
-        // Find the traceId identifier declared in the function scope
+         // Find the traceId identifier declared in the function scope
         let traceIdIdentifier;
         // const funcPath = path.getFunctionParent(); // Already defined above
 
@@ -279,21 +297,8 @@ module.exports = function traceFunctions({ types: t }) {
             console.warn(`[traceFunctions ReturnStatement] Falling back to risky identifier: ${traceIdIdentifier.name}`);
         }
 
-        // --- Manually instrument scope for returned functions ---
-        // const originalArgument = path.node.argument; // REMOVED - Already declared earlier in this visitor
-        if (originalArgument && (t.isFunctionExpression(originalArgument) || t.isArrowFunctionExpression(originalArgument))) {
-            if (!originalArgument[SCOPE_INSTRUMENTED]) {
-                const funcScopeId = generateUniqueId('_funcScopeId-');
-                originalArgument._funcScopeId = funcScopeId;
-                originalArgument[SCOPE_INSTRUMENTED] = true;
-                console.log(`[traceFunctions ReturnStatement] Manually added scope ID ${funcScopeId} to returned function.`);
-            } else {
-                 console.log(`[traceFunctions ReturnStatement] Returned function already has scope instrumentation.`);
-            }
-        }
-        // --- End manual instrumentation ---
-
         // 4. Create the specific Tracer.exitFunc call
+        console.log(`[traceFunctions ReturnStatement] constructing exitCallSpecific: fnName=${fnName}, exitingScopeId=${scopeId}, tempReturnVar=${tempVarId.name}, returnLine=${path.node.loc?.start.line}, originalArgument=${JSON.stringify(originalArgument)}`);
         const exitCallSpecific = t.expressionStatement(
             t.callExpression(
                 t.memberExpression(t.identifier("Tracer"), t.identifier("exitFunc")),
@@ -309,6 +314,7 @@ module.exports = function traceFunctions({ types: t }) {
             )
         );
         t.inherits(exitCallSpecific, path.node); // Attempt to copy location
+        console.log(`[traceFunctions ReturnStatement] exitCallSpecific AST: ${JSON.stringify(exitCallSpecific)}`);
 
         // 5. Create the new return statement
         const newReturnStmt = t.returnStatement(tempVarId);
@@ -338,10 +344,10 @@ module.exports = function traceFunctions({ types: t }) {
                 if (tempVarDeclPath && tempVarDeclPath.isVariableDeclaration()) {
                     const funcExprPath = tempVarDeclPath.get('declarations.0.init');
                     if (funcExprPath && (funcExprPath.isFunctionExpression() || funcExprPath.isArrowFunctionExpression())) {
-                        // --- Requeue the FunctionExpression path ---
-                        console.log("[traceFunctions ReturnStatement] Requeuing FunctionExpression path.");
-                        funcExprPath.requeue();
-                        // --- End requeue ---
+                        // --- Explicitly visit the FunctionExpression path ---
+                        console.log("[traceFunctions ReturnStatement] Explicitly visiting FunctionExpression path.");
+                        funcExprPath.visit();
+                        // --- End explicit visit ---
                     } else {
                          console.warn("[traceFunctions ReturnStatement] Could not find FunctionExpression path in tempVarDecl for requeue.");
                     }

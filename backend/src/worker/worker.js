@@ -108,9 +108,9 @@ try {
         preserveLoc,                                 // 1) stash loc
         traceLoops,                                  // 2) timeout checks
         [ traceLines, { originalSource: jsSourceCode } ], // 3) step calls
-        traceScopePlugin,                            // 4) locals & closures
-        traceVariablesPlugin,                        // 5) varWrite & varRead
-        traceFunctions                               // 6) enter/exit/errorFunc
+        traceFunctions,                              // 4) enter/exit/errorFunc
+        traceScopePlugin,                            // 5) locals & closures
+        traceVariablesPlugin                         // 6) varWrite & varRead
       ]
     })
     .code;
@@ -214,15 +214,18 @@ const Tracer = {
   }),
 
   exitFunc: (id, name, start, end, exitingScopeId, returnValue, returnLine) => {
-    // Task 3.2: Log the return value for inspection
-    console.log(`[Tracer.exitFunc] id: ${id}, name: ${name}, returnValue:`, returnValue);
-    console.log('[Worker Tracer.exitFunc] Received returnValue:', prettyFormat(returnValue));
-    postEvent({
-      type: "ExitFunction",
-      payload: {
-        id, name, start, end,
-      exitingScopeId,
-      returnValue,
+      // Format returnValue for consistent reporting
+      const formattedReturnValue = prettyFormat(returnValue);
+      console.log('[Worker Tracer.exitFunc] Formatted returnValue:', formattedReturnValue);
+      postEvent({
+        type: "ExitFunction",
+        payload: {
+          id,
+          name,
+          start,
+          end,
+      exitingScopeId, // revisit exitingScopeId correctness
+      returnValue: formattedReturnValue,
       returnLine
       }
     });
