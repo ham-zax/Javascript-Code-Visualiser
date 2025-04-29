@@ -1,4 +1,4 @@
-// src/components/CodeViewer.tsx
+ // src/components/CodeViewer.tsx
 import { forwardRef, useImperativeHandle, useRef, useEffect, useState, ForwardedRef, useCallback } from 'react'; // Add ForwardedRef, useCallback
 import * as monaco from 'monaco-editor';
 import Editor, { OnMount } from '@monaco-editor/react';
@@ -415,10 +415,7 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
               right: '0px', // Span editor width (consider scrollbar width if needed)
               top: `${top}px`, // Position based on calculated top
               height: `${editorRef.current?.getOption(monaco.editor.EditorOption.lineHeight)}px`,
-              backgroundColor: type === 'current' ? 'rgba(0, 255, 255, 0.15)' :
-                type === 'call' ? 'rgba(255, 255, 0, 0.15)' :
-                  type === 'return' ? 'rgba(0, 255, 0, 0.15)' :
-                    'transparent',
+            backgroundColor: 'transparent',
               pointerEvents: 'none',
               zIndex: 0, // Behind text
             }}
@@ -464,6 +461,9 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
     </div>
   );
 });
+
+// Add display name for better debugging
+CodeViewer.displayName = 'CodeViewer';
 
 // Add display name for better debugging
 CodeViewer.displayName = 'CodeViewer';

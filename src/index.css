@@ -147,27 +147,27 @@ display: block;
  */
 
 .highlight-next-step {
-  background-color: #ffe066 !important; /* Gold, visible on light backgrounds */
-  color: #222 !important;
+  background-color: rgba(255, 255, 0, 0.15) !important;
+  border: 1px solid rgba(255, 255, 0, 0.3) !important;
   width: 100%;
   display: block;
 }
 
 .highlight-last-executed {
-  background-color: #90e0ef !important; /* Light blue, visible on light backgrounds */
-  color: #222 !important;
+  background-color: rgba(0, 255, 255, 0.1) !important;
+  border: 1px solid rgba(0, 255, 255, 0.3) !important;
   width: 100%;
   display: block;
 }
 
 .dark .highlight-next-step {
-  background-color: rgba(200, 255, 0, 0.92) !important;
-  color: #222 !important;
+  background-color: rgba(255, 255, 0, 0.25) !important;
+  border-color: rgba(255, 255, 0, 0.5) !important;
 }
 
 .dark .highlight-last-executed {
-  background-color: rgba(0, 255, 255, 0.92) !important;
-  color: #fff !important;
+  background-color: rgba(0, 255, 255, 0.25) !important;
+  border-color: rgba(0, 255, 255, 0.5) !important;
 }
 
 /* Subtle class for improved contrast with white text */
