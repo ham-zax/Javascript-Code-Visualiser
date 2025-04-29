@@ -1,4 +1,4 @@
- // src/components/CodeViewer.tsx
+// src/components/CodeViewer.tsx
 import { forwardRef, useImperativeHandle, useRef, useEffect, useState, ForwardedRef, useCallback } from 'react'; // Add ForwardedRef, useCallback
 import * as monaco from 'monaco-editor';
 import Editor, { OnMount } from '@monaco-editor/react';
@@ -43,7 +43,7 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
 
   // Get state from Zustand store
   const events = usePlaybackStore((state) => state.events);
-  const idx = usePlaybackStore((state) => state.idx);
+  const currentEventIndex = usePlaybackStore((state) => state.currentEventIndex); // Renamed from idx
 
   // --- Helper Functions ---
 
@@ -72,24 +72,24 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
 
   // Dual highlight logic: prevLine (last executed), nextLine (next to execute)
   const getHighlightsFromState = useCallback((): Highlight[] => {
-    if (idx < 0 || idx > events.length) return [];
+    if (currentEventIndex < 0 || currentEventIndex > events.length) return []; // Renamed from idx
     // Inline deriveHighlightedLine logic (copied from App.tsx)
     let nextLine: number | null = null;
     let prevLine: number | null = null;
 
     // Next line logic
     if (
-      idx >= 0 &&
-      idx < events.length &&
-      events[idx].type === "STEP_LINE"
+      currentEventIndex >= 0 && // Renamed from idx
+      currentEventIndex < events.length && // Renamed from idx
+      events[currentEventIndex].type === "STEP_LINE" // Renamed from idx
     ) {
-      const payload = events[idx].payload as { line?: number };
+      const payload = events[currentEventIndex].payload as { line?: number }; // Renamed from idx
       if (typeof payload.line === "number") {
         nextLine = payload.line;
       }
-    } else if (idx >= 0 && idx < events.length) {
+    } else if (currentEventIndex >= 0 && currentEventIndex < events.length) { // Renamed from idx
       // Not a STEP_LINE, try to look ahead for the next STEP_LINE
-      for (let i = idx + 1; i < events.length; i++) {
+      for (let i = currentEventIndex + 1; i < events.length; i++) { // Renamed from idx
         if (events[i].type === "STEP_LINE") {
           const payload = events[i].payload as { line?: number };
           if (typeof payload.line === "number") {
@@ -101,8 +101,8 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
     }
 
     // Previous line logic
-    if (idx > 0) {
-      const prevEvent = events[idx - 1];
+    if (currentEventIndex > 0) { // Renamed from idx
+      const prevEvent = events[currentEventIndex - 1]; // Renamed from idx
       if (prevEvent.type === "STEP_LINE") {
         const payload = prevEvent.payload as { line?: number };
         if (typeof payload.line === "number") {
@@ -114,7 +114,7 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
           prevLine = payload.callSiteLine;
         } else {
           // fallback: last STEP_LINE before CALL
-          for (let i = idx - 2; i >= 0; i--) {
+          for (let i = currentEventIndex - 2; i >= 0; i--) { // Renamed from idx
             if (events[i].type === "STEP_LINE") {
               const p = events[i].payload as { line?: number };
               if (typeof p.line === "number") {
@@ -130,7 +130,7 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
           prevLine = payload.returnLine;
         } else {
           // fallback: last STEP_LINE within the returned function
-          for (let i = idx - 2; i >= 0; i--) {
+          for (let i = currentEventIndex - 2; i >= 0; i--) { // Renamed from idx
             if (events[i].type === "STEP_LINE") {
               const p = events[i].payload as { line?: number };
               if (typeof p.line === "number") {
@@ -141,8 +141,8 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
           }
         }
       } else {
-        // fallback: last STEP_LINE before idx
-        for (let i = idx - 1; i >= 0; i--) {
+        // fallback: last STEP_LINE before currentEventIndex
+        for (let i = currentEventIndex - 1; i >= 0; i--) { // Renamed from idx
           if (events[i].type === "STEP_LINE") {
             const p = events[i].payload as { line?: number };
             if (typeof p.line === "number") {
@@ -162,7 +162,7 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
       highlights.push({ line: nextLine, type: "next" });
     }
     return highlights;
-  }, [idx, events]);
+  }, [currentEventIndex, events]); // Renamed from idx
 
   // Update animated positions based on current highlights and editor state (Memoized)
   const updateHighlightAndArrowPositions = useCallback(() => {
@@ -292,21 +292,21 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
 
     if (!editorRef.current || !handle) {
       // If editor or handle isn't ready, do nothing or reset
-      if (idx === -1 && handle) { // Check handle exists before calling reset
+      if (currentEventIndex === -1 && handle) { // Check handle exists before calling reset // Renamed from idx
         handle.reset();
       }
       return;
     }
 
-    if (idx < 0 || idx >= events.length) {
+    if (currentEventIndex < 0 || currentEventIndex >= events.length) { // Renamed from idx
       // Handle invalid index, potentially reset
-      if (idx === -1) {
+      if (currentEventIndex === -1) { // Renamed from idx
         handle.reset(); // handle is guaranteed to exist here
       }
       return;
     }
 
-    const currentEvent = events[idx];
+    const currentEvent = events[currentEventIndex]; // Renamed from idx
     const newHighlights = getHighlightsFromState(); // Calculate highlights based on current event
 
     // Update Monaco decorations via the imperative handle
@@ -316,7 +316,7 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
     if (currentEvent.type === 'CONSOLE') {
       // Try to find the most recent STEP_LINE event before this console event for line number
       let line: number | null = null;
-      for (let i = idx - 1; i >= 0; i--) {
+      for (let i = currentEventIndex - 1; i >= 0; i--) { // Renamed from idx
         if (events[i].type === "STEP_LINE") {
           const payload = events[i].payload as { line?: number };
           if (typeof payload.line === "number") {
@@ -342,7 +342,7 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
 
     // Note: updateHighlightAndArrowPositions is called inside handle.setHighlights
 
-  }, [idx, events, code, ref, getHighlightsFromState, updateHighlightAndArrowPositions, setConsoleBubbles]); // Use memoized functions, add missing state setters
+  }, [currentEventIndex, events, code, ref, getHighlightsFromState, updateHighlightAndArrowPositions, setConsoleBubbles]); // Use memoized functions, add missing state setters // Renamed from idx
 
   // Effect to clean up hover provider and bubble timeouts on unmount
   useEffect(() => {

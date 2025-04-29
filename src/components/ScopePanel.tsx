@@ -6,7 +6,6 @@
       globalScope: Scope;
       currentContext: ExecutionContext | undefined;
       capturedScope: Scope | null; // The scope captured by closure
-      closureSourceContextName: string; // Name of the context where closure was formed
     }
 
     const renderScope = (scope: Scope, title: string, isClosure = false) => (
@@ -33,7 +32,7 @@
       </div>
     );
 
-    export const ScopePanel: React.FC<ScopePanelProps> = ({ globalScope, currentContext, capturedScope, closureSourceContextName }) => {
+    export const ScopePanel: React.FC<ScopePanelProps> = ({ globalScope, currentContext, capturedScope }) => {
       return (
         <div className="bg-white p-4 rounded-md shadow">
           <h3 className="text-lg font-semibold mb-3 border-b pb-2">Scopes</h3>
@@ -42,8 +41,8 @@
              renderScope(currentContext.localScope, `Local Scope: ${currentContext.functionName}`)
           )}
            {capturedScope && currentContext && (
-             // Refined title for closure scope
-             renderScope(capturedScope, `Closure Scope (for ${currentContext.functionName}, from ${closureSourceContextName})`, true)
+             // Simplified title for closure scope
+             renderScope(capturedScope, `Closure Scope (for ${currentContext.functionName})`, true)
           )}
         </div>
       );

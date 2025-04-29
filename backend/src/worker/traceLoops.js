@@ -15,9 +15,6 @@ const traceLoops = (babel) => {
     );
     const callIterateLoop = t.callExpression(iterateLoop, []);
     const callStatement = t.expressionStatement(callIterateLoop);
-    // Mark the *call statement itself* so traceLines ignores it if needed
-    // (Using a shared symbol like 'ALREADY' from traceLines might be better)
-    // callStatement[ALREADY] = true; // Assuming ALREADY is defined/imported if used
 
 
     // --- Ensure the loop body is a BlockStatement ---

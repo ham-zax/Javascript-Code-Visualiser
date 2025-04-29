@@ -18,7 +18,7 @@ import {
 
 export default function ExecutionControls() {
   const {
-    idx,
+    currentEventIndex, // Renamed from idx
     events,
     isPlaying,
     speed,
@@ -31,8 +31,8 @@ export default function ExecutionControls() {
   } = usePlaybackStore();
 
   const totalSteps = events.length;
-  const canStepBack = idx > 0;
-  const canStepForward = idx < totalSteps;
+  const canStepBack = currentEventIndex > 0; // Renamed from idx
+  const canStepForward = currentEventIndex < totalSteps; // Renamed from idx
   const canPlay = totalSteps > 0;
 
   return (
@@ -60,7 +60,7 @@ export default function ExecutionControls() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => replayTo(idx - 1)}
+                  onClick={() => replayTo(currentEventIndex - 1)} // Renamed from idx
                   disabled={!canStepBack}
                   aria-label="Previous Step"
                 >
@@ -88,7 +88,7 @@ export default function ExecutionControls() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => replayTo(idx + 1)}
+                  onClick={() => replayTo(currentEventIndex + 1)} // Renamed from idx
                   disabled={!canStepForward}
                   aria-label="Next Step"
                 >
@@ -178,7 +178,7 @@ export default function ExecutionControls() {
 
         {/* Progress Indicator */}
         <div className="text-center text-sm text-gray-600">
-          Step {idx} of {totalSteps}
+          Step {currentEventIndex} of {totalSteps} {/* Renamed from idx */}
         </div>
       </div>
     </Card>

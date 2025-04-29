@@ -67,11 +67,11 @@ export interface TraceEvent {
 
 interface PlaybackState {
   events: TraceEvent[];
-  idx: number;
+  currentEventIndex: number; // Renamed from idx
   isPlaying: boolean;
   speed: number;
   setEvents: (events: TraceEvent[]) => void;
-  setIdx: (idx: number) => void;
+  setIdx: (idx: number) => void; // Keep internal setter name for now, or rename if preferred
   togglePlay: () => void;
   setSpeed: (speed: number) => void;
   replayTo: (targetIdx: number) => void;
@@ -84,33 +84,33 @@ type PlaybackStateCreator = StateCreator<PlaybackState>
 
 const playbackStateCreator: PlaybackStateCreator = (set, get) => ({
   events: [],
-  idx: 0,
+  currentEventIndex: 0, // Renamed from idx
   isPlaying: false,
   speed: 1,
-  setEvents: (events: TraceEvent[]) => set({ events, idx: 0 }),
-  setIdx: (idx: number) => set({ idx }),
+  setEvents: (events: TraceEvent[]) => set({ events, currentEventIndex: 0 }), // Renamed from idx
+  setIdx: (idx: number) => set({ currentEventIndex: idx }), // Renamed from idx
   togglePlay: () => set({ isPlaying: !get().isPlaying }),
   setSpeed: (speed: number) => set({ speed }),
   replayTo: (targetIdx: number) => {
     const { events } = get()
     // Allow setting index to events.length (end state)
     if (targetIdx < 0 || targetIdx > events.length) return
-    set({ idx: targetIdx, isPlaying: false })
+    set({ currentEventIndex: targetIdx, isPlaying: false }) // Renamed from idx
   },
 
   stepInto: () => {
     // Placeholder for stepInto logic
     console.warn("ACTION: stepInto triggered (Not Implemented)");
-    const { idx, events, replayTo } = get();
-    if (idx < events.length) {
-      replayTo(idx + 1);
+    const { currentEventIndex, events, replayTo } = get(); // Renamed from idx
+    if (currentEventIndex < events.length) {
+      replayTo(currentEventIndex + 1); // Renamed from idx
     }
   },
 
   stepOver: () => {
-    const { events, idx, replayTo } = get()
+    const { events, currentEventIndex, replayTo } = get() // Renamed from idx
     let level = 0
-    let j = idx
+    let j = currentEventIndex // Renamed from idx
     if (j < events.length && events[j]?.type === 'CALL') {
       level = 1
       j++
@@ -120,15 +120,15 @@ const playbackStateCreator: PlaybackStateCreator = (set, get) => ({
         j++
       }
     } else {
-      j = Math.min(idx + 1, events.length) // Move to next or end
+      j = Math.min(currentEventIndex + 1, events.length) // Move to next or end // Renamed from idx
     }
     replayTo(j) // Use replayTo to update index and stop playback
   },
 
   stepOut: () => {
-    const { events, idx, replayTo } = get()
+    const { events, currentEventIndex, replayTo } = get() // Renamed from idx
     let level = 0
-    let j = idx + 1 // Start checking from the *next* event
+    let j = currentEventIndex + 1 // Start checking from the *next* event // Renamed from idx
     while (j < events.length) {
       if (events[j].type === 'CALL') level++
       if (events[j].type === 'RETURN') {

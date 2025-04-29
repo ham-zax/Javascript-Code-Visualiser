@@ -4,7 +4,7 @@ import { Play, Pause, SkipBack, SkipForward, StepBack, StepForward } from 'lucid
 export function Controls() {
   // Get state and actions from the store
   const {
-    idx,
+    currentEventIndex, // Renamed from idx
     events,
     isPlaying,
     speed,
@@ -23,15 +23,15 @@ export function Controls() {
       <div className="flex items-center justify-center space-x-2">
          <button
            onClick={() => replayTo(0)} // Go to beginning
-           disabled={idx === 0}
+           disabled={currentEventIndex === 0} // Renamed from idx
            className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-50"
            aria-label="Reset"
          >
            <SkipBack size={18} />
          </button>
         <button
-          onClick={() => replayTo(idx - 1)} // Previous Step
-          disabled={idx === 0}
+          onClick={() => replayTo(currentEventIndex - 1)} // Previous Step // Renamed from idx
+          disabled={currentEventIndex === 0} // Renamed from idx
           className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-50"
           aria-label="Previous Step"
         >
@@ -46,8 +46,8 @@ export function Controls() {
           {isPlaying ? <Pause size={20} /> : <Play size={20} />}
         </button>
         <button
-          onClick={() => replayTo(idx + 1)} // Next Step
-          disabled={idx >= maxIdx}
+          onClick={() => replayTo(currentEventIndex + 1)} // Next Step // Renamed from idx
+          disabled={currentEventIndex >= maxIdx} // Renamed from idx
           className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-50"
           aria-label="Next Step"
         >
@@ -55,7 +55,7 @@ export function Controls() {
         </button>
          <button
            onClick={() => replayTo(maxIdx)} // Go to end
-           disabled={idx >= maxIdx}
+           disabled={currentEventIndex >= maxIdx} // Renamed from idx
            className="p-2 rounded-full hover:bg-gray-200 disabled:opacity-50"
            aria-label="Go to End"
          >
@@ -67,14 +67,14 @@ export function Controls() {
        <div className="flex items-center justify-center space-x-2">
          <button
            onClick={stepOver}
-           disabled={idx >= maxIdx || events.length === 0}
+           disabled={currentEventIndex >= maxIdx || events.length === 0} // Renamed from idx
            className="px-3 py-1 text-sm border rounded hover:bg-gray-100 disabled:opacity-50"
          >
            Step Over
          </button>
          <button
            onClick={stepOut}
-           disabled={idx >= maxIdx || events.length === 0}
+           disabled={currentEventIndex >= maxIdx || events.length === 0} // Renamed from idx
            className="px-3 py-1 text-sm border rounded hover:bg-gray-100 disabled:opacity-50"
          >
            Step Out
@@ -100,7 +100,7 @@ export function Controls() {
 
       {/* Progress Indicator */}
       <div className="text-center text-sm text-gray-600">
-        Step {idx} of {maxIdx}
+        Step {currentEventIndex} of {maxIdx} {/* Renamed from idx */}
       </div>
     </div>
   )

@@ -30,11 +30,11 @@ import { Settings } from "lucide-react";
 /** Derive call stack frames using scope name map */
 function deriveCallStackState(
   events: TraceEvent[],
-  idx: number,
+  currentEventIndex: number, // Renamed from idx
   scopeIdToNameMap: Map<string, string>
 ): CallStackFrame[] {
   const stack: CallStackFrame[] = [];
-  for (let i = 0; i <= idx && i < events.length; i++) {
+  for (let i = 0; i <= currentEventIndex && i < events.length; i++) { // Renamed from idx
     const event = events[i];
     if (event.type === "CALL") {
       const payload = event.payload as any;
@@ -61,14 +61,14 @@ function deriveCallStackState(
 /** Derive scopes mapping using Lodash deep clone, array variables, and type guards */
 function deriveScopeState(
   events: TraceEvent[],
-  idx: number,
+  currentEventIndex: number, // Renamed from idx
   currentCallStack: CallStackFrame[]
 ): Record<string, DisplayScopeInfo> {
   let originalSnapshot: any[] = [];
   let lastStepLineIdx = -1;
 
   // Find the most recent STEP_LINE event with scopes
-  for (let i = Math.min(idx, events.length - 1); i >= 0; i--) {
+  for (let i = Math.min(currentEventIndex, events.length - 1); i >= 0; i--) { // Renamed from idx
     const event = events[i];
     if (
       event.type === "STEP_LINE" &&
@@ -93,10 +93,10 @@ function deriveScopeState(
     }];
   }
 
-  // Mark changed variable if ASSIGN event at idx
+  // Mark changed variable if ASSIGN event at currentEventIndex
   let changedVarKey: string | null = null;
-  if (idx >= 0 && idx < events.length) {
-    const currentEvent = events[idx];
+  if (currentEventIndex >= 0 && currentEventIndex < events.length) { // Renamed from idx
+    const currentEvent = events[currentEventIndex]; // Renamed from idx
     if (
       currentEvent.type === "ASSIGN" &&
       "scopeId" in currentEvent.payload &&
@@ -162,13 +162,13 @@ function deriveScopeState(
 /** Derive Heap Objects (Functions) */
 function deriveHeapObjects(
   events: TraceEvent[],
-  idx: number,
+  currentEventIndex: number, // Renamed from idx
   scopeIdToNameMap: Map<string, string>
 ): Record<string, HeapFunctionObject> {
   const heapObjects: Record<string, HeapFunctionObject> = {};
 
   // Iterate through events up to the current index to find function definitions/assignments
-  for (let i = 0; i <= idx && i < events.length; i++) {
+  for (let i = 0; i <= currentEventIndex && i < events.length; i++) { // Renamed from idx
     const event = events[i];
     let targetPayload: any = null;
     let scopeSnapshot: any[] | undefined;
@@ -227,11 +227,11 @@ function deriveHeapObjects(
 
 
 /** Derive plain-text explanation */
-function deriveExplanation(events: TraceEvent[], idx: number): string {
-  if (idx < 0 || idx >= events.length) {
-    return idx === -1 ? "Execution not started." : "Execution finished.";
+function deriveExplanation(events: TraceEvent[], currentEventIndex: number): string { // Renamed from idx
+  if (currentEventIndex < 0 || currentEventIndex >= events.length) { // Renamed from idx
+    return currentEventIndex === -1 ? "Execution not started." : "Execution finished."; // Renamed from idx
   }
-  const event = events[idx];
+  const event = events[currentEventIndex]; // Renamed from idx
   const payload = event.payload as any;
   switch (event.type) {
     case "STEP_LINE":
@@ -256,9 +256,9 @@ function deriveExplanation(events: TraceEvent[], idx: number): string {
 }
 
 /** Derive console output lines */
-function deriveConsoleOutput(events: TraceEvent[], idx: number): string[] {
+function deriveConsoleOutput(events: TraceEvent[], currentEventIndex: number): string[] { // Renamed from idx
   const output: string[] = [];
-  for (let i = 0; i < idx && i < events.length; i++) {
+  for (let i = 0; i < currentEventIndex && i < events.length; i++) { // Renamed from idx
     if (events[i].type === "CONSOLE") {
       output.push((events[i].payload as any).text?.trim());
     }
@@ -266,31 +266,30 @@ function deriveConsoleOutput(events: TraceEvent[], idx: number): string[] {
   return output;
 }
 
-/** Derive highlighted source line */
 /**
  * Derives the next and previous highlighted lines for dual highlighting.
  * @returns { nextLine: number | null, prevLine: number | null }
  */
 function deriveHighlightedLine(
   events: any[], // TraceEvent[]
-  idx: number
+  currentEventIndex: number // Renamed from idx
 ): { nextLine: number | null; prevLine: number | null } {
   let nextLine: number | null = null;
   let prevLine: number | null = null;
 
   // Next line logic
   if (
-    idx >= 0 &&
-    idx < events.length &&
-    events[idx].type === "STEP_LINE"
+    currentEventIndex >= 0 && // Renamed from idx
+    currentEventIndex < events.length && // Renamed from idx
+    events[currentEventIndex].type === "STEP_LINE" // Renamed from idx
   ) {
-    const payload = events[idx].payload as { line?: number };
+    const payload = events[currentEventIndex].payload as { line?: number }; // Renamed from idx
     if (typeof payload.line === "number") {
       nextLine = payload.line;
     }
-  } else if (idx >= 0 && idx < events.length) {
+  } else if (currentEventIndex >= 0 && currentEventIndex < events.length) { // Renamed from idx
     // Not a STEP_LINE, try to look ahead for the next STEP_LINE
-    for (let i = idx + 1; i < events.length; i++) {
+    for (let i = currentEventIndex + 1; i < events.length; i++) { // Renamed from idx
       if (events[i].type === "STEP_LINE") {
         const payload = events[i].payload as { line?: number };
         if (typeof payload.line === "number") {
@@ -302,8 +301,8 @@ function deriveHighlightedLine(
   }
 
   // Previous line logic
-  if (idx > 0) {
-    const prevEvent = events[idx - 1];
+  if (currentEventIndex > 0) { // Renamed from idx
+    const prevEvent = events[currentEventIndex - 1]; // Renamed from idx
     if (prevEvent.type === "STEP_LINE") {
       const payload = prevEvent.payload as { line?: number };
       if (typeof payload.line === "number") {
@@ -315,7 +314,7 @@ function deriveHighlightedLine(
         prevLine = payload.callSiteLine;
       } else {
         // fallback: last STEP_LINE before CALL
-        for (let i = idx - 2; i >= 0; i--) {
+        for (let i = currentEventIndex - 2; i >= 0; i--) { // Renamed from idx
           if (events[i].type === "STEP_LINE") {
             const p = events[i].payload as { line?: number };
             if (typeof p.line === "number") {
@@ -331,7 +330,7 @@ function deriveHighlightedLine(
         prevLine = payload.returnLine;
       } else {
         // fallback: last STEP_LINE within the returned function
-        for (let i = idx - 2; i >= 0; i--) {
+        for (let i = currentEventIndex - 2; i >= 0; i--) { // Renamed from idx
           if (events[i].type === "STEP_LINE") {
             const p = events[i].payload as { line?: number };
             if (typeof p.line === "number") {
@@ -342,8 +341,8 @@ function deriveHighlightedLine(
         }
       }
     } else {
-      // fallback: last STEP_LINE before idx
-      for (let i = idx - 1; i >= 0; i--) {
+      // fallback: last STEP_LINE before currentEventIndex
+      for (let i = currentEventIndex - 1; i >= 0; i--) { // Renamed from idx
         if (events[i].type === "STEP_LINE") {
           const p = events[i].payload as { line?: number };
           if (typeof p.line === "number") {
@@ -372,7 +371,7 @@ counter(); // Second call, count becomes 2
 
 function App() {
   // Destructure all needed values from the store *once*
-  const { events, idx, setEvents, replayTo, setIdx, isPlaying, speed } = usePlaybackStore();
+  const { events, currentEventIndex, setEvents, replayTo, setIdx, isPlaying, speed } = usePlaybackStore(); // Renamed from idx
   const [currentCode, setCurrentCode] = useState(DEFAULT_CODE);
   const [isRunning, setIsRunning] = useState(false);
 
@@ -404,14 +403,14 @@ function App() {
 
   // 2. Derived Call Stack (now uses the map)
   const derivedCallStack = useMemo(
-    () => deriveCallStackState(events, idx, scopeIdToNameMap.current),
-    [events, idx] // Dependency on map ref's *content* is implicit via events/idx
+    () => deriveCallStackState(events, currentEventIndex, scopeIdToNameMap.current), // Renamed from idx
+    [events, currentEventIndex] // Dependency on map ref's *content* is implicit via events/currentEventIndex // Renamed from idx
   );
 
   // 3. Derived Scopes (placeholder for heap object linking)
   const derivedScopesRecord = useMemo(
-    () => deriveScopeState(events, idx, derivedCallStack),
-    [events, idx, derivedCallStack]
+    () => deriveScopeState(events, currentEventIndex, derivedCallStack), // Renamed from idx
+    [events, currentEventIndex, derivedCallStack] // Renamed from idx
   );
   // Convert scopes record to array for VisualizationState prop
   const derivedScopesArray = useMemo(() => Object.values(derivedScopesRecord), [derivedScopesRecord]);
@@ -419,15 +418,15 @@ function App() {
 
   // 4. Derived Heap Objects
   const derivedHeapObjects = useMemo(
-      () => deriveHeapObjects(events, idx, scopeIdToNameMap.current),
-      [events, idx] // Depends on events and current index
+      () => deriveHeapObjects(events, currentEventIndex, scopeIdToNameMap.current), // Renamed from idx
+      [events, currentEventIndex] // Depends on events and current index // Renamed from idx
   );
 
   // 5. Other derived states
   const totalSteps = useMemo(() => events.length, [events]);
-  const derivedExplanation = useMemo(() => deriveExplanation(events, idx), [events, idx]);
-  const derivedConsole = useMemo(() => deriveConsoleOutput(events, idx), [events, idx]);
-  const derivedHighlightLine = useMemo(() => deriveHighlightedLine(events, idx), [events, idx]);
+  const derivedExplanation = useMemo(() => deriveExplanation(events, currentEventIndex), [events, currentEventIndex]); // Renamed from idx
+  const derivedConsole = useMemo(() => deriveConsoleOutput(events, currentEventIndex), [events, currentEventIndex]); // Renamed from idx
+  const derivedHighlightLine = useMemo(() => deriveHighlightedLine(events, currentEventIndex), [events, currentEventIndex]); // Renamed from idx
   // NOTE: derivedHighlightLine is now { nextLine, prevLine }
 
   // 6. Derived Persistent Environments
@@ -498,13 +497,13 @@ function App() {
   // Auto-play effect
   useEffect(() => {
     let timer: NodeJS.Timeout | undefined;
-    if (isPlaying && idx < totalSteps) {
+    if (isPlaying && currentEventIndex < totalSteps) { // Renamed from idx
       timer = setTimeout(() => {
-        setIdx(idx + 1);
+        setIdx(currentEventIndex + 1); // Use setter, rename internal usage // Renamed from idx
       }, 1000 / speed);
     }
     return () => clearTimeout(timer);
-  }, [isPlaying, idx, totalSteps, speed, setIdx]);
+  }, [isPlaying, currentEventIndex, totalSteps, speed, setIdx]); // Renamed from idx
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
