@@ -74,6 +74,7 @@ export interface FrameData {
 }
 
 export interface HeapObjectData {
+  definingScopeId: boolean;
   id: string;
   type: 'object' | 'array' | 'function';
   properties?: Record<string, Variable>; // For objects and arrays with string keys

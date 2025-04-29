@@ -358,10 +358,16 @@ function deriveHighlightedLine(
   return { nextLine, prevLine };
 }
 
-const DEFAULT_CODE = `function greet(name) {
-  console.log("Hello, " + name + "!");
+const DEFAULT_CODE = `function createCounter() {
+  let count = 0; // Declaration
+  return function() {
+    count = count + 1; // Assignment
+    return count;
+  };
 }
-greet("World");
+const counter = createCounter();
+counter(); // First call, count becomes 1
+counter(); // Second call, count becomes 2
 `;
 
 function App() {

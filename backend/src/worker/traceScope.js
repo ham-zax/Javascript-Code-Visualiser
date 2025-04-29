@@ -21,129 +21,121 @@ const traceScopePlugin = function traceScope({ types: t }) {
     visitor: {
       Function(path) {
         // --- guard: only instrument once ---
-console.log(`[traceScope] Entering Function visitor for node type: ${path.node.type}, Name: ${path.node.id?.name || '(anon)'}, Parent type: ${path.parent.type}`);
-        if (path.node[SCOPE_INSTRUMENTED]) return; // Use exported constant
-        path.node[SCOPE_INSTRUMENTED] = true;     // Use exported constant
-
-        // --- Generate unique scopeId for this function ---
-        const scopeId = generateUniqueId('funcScopeId-'); // Use helper function
-        path.scope.data = path.scope.data || {};
-        path.scope.data.scopeId = scopeId; // Attach ID to the scope data
-console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', scopeId, 'NodeID:', path.node._funcScopeId);
-
-        // --- Determine parentId (enclosing function or global) ---
-        let parentId = null;
-        if (path.scope.parent && path.scope.parent.data && path.scope.parent.data.scopeId) {
-          parentId = path.scope.parent.data.scopeId;
-        } else {
-          parentId = "global";
+        console.log(`[traceScope] Entering Function visitor for node type: ${path.node.type}, Name: ${path.node.id?.name || '(anon)'}, Parent type: ${path.parent.type}`);
+        if (path.node[SCOPE_INSTRUMENTED]) {
+             console.log(`[traceScope] Node already instrumented, skipping.`);
+             return;
         }
+        path.node[SCOPE_INSTRUMENTED] = true;
 
-        // --- 1) Capture parameters at function entry ---
+        // --- Generate unique scopeId for this function's LEXICAL scope ---
+        let functionLexicalId = path.node._funcScopeId;
+        if (!functionLexicalId) {
+            functionLexicalId = generateUniqueId('funcScopeId-');
+            path.node._funcScopeId = functionLexicalId;
+            console.log(`[traceScope] Assigned _funcScopeId '${functionLexicalId}' to function ${path.node.id?.name || '(anon)'}`);
+        } else {
+            console.log(`[traceScope] Using existing _funcScopeId '${functionLexicalId}' for function ${path.node.id?.name || '(anon)'}`);
+        }
+        path.scope.data = path.scope.data || {};
+        path.scope.data.scopeId = functionLexicalId;
+
+        // --- Determine parent's LEXICAL Id ---
+        let parentLexicalId = "global";
+        let parentScopePath = path.scope.getFunctionParent()?.path || path.scope.getProgramParent()?.path;
+
+        if (parentScopePath?.isFunction() && parentScopePath.node?._funcScopeId) {
+            parentLexicalId = parentScopePath.node._funcScopeId;
+        } else if (parentScopePath?.isProgram()) {
+            parentLexicalId = "global";
+        } else {
+            console.warn(`[traceScope] Could not determine valid lexical parent scope ID for function ${functionLexicalId}. Falling back to 'global'. Parent path type: ${parentScopePath?.type}`);
+            parentLexicalId = "global";
+        }
+        console.log(`[traceScope] Determined parent lexical ID: ${parentLexicalId} for function ${functionLexicalId}`);
+
+        // --- 1) Capture parameters & locals at function entry ---
         const params = path.node.params
           .filter(p => t.isIdentifier(p))
           .map(p => p.name);
 
-        const paramsObjectProps = params.map(name =>
+        const initialLocalsProps = params.map(name =>
           t.objectProperty(t.identifier(name), t.identifier(name), false, true)
         );
+
         const captureLocalsStmt = t.expressionStatement(
           t.callExpression(
             t.memberExpression(t.identifier("Tracer"), t.identifier("captureLocals")),
             [
-              t.stringLiteral(scopeId),
-              t.stringLiteral(parentId),
-              t.objectExpression(paramsObjectProps)
+              t.stringLiteral(functionLexicalId),
+              t.stringLiteral(parentLexicalId),
+              t.objectExpression(initialLocalsProps)
             ]
           )
         );
-        captureLocalsStmt[SCOPE_INSTRUMENTED] = true; // Use exported constant
+        captureLocalsStmt[SCOPE_INSTRUMENTED] = true;
 
-        // Ensure body is a BlockStatement
         if (!t.isBlockStatement(path.node.body)) {
           path.node.body = t.blockStatement([t.returnStatement(path.node.body)]);
         }
-        // Insert at top of function
         path.get("body").unshiftContainer("body", captureLocalsStmt);
+        console.log(`[traceScope] Inserted captureLocals for function ${functionLexicalId}.`);
 
-        // --- 2) Robust Free-Variable Analysis for Closure ---
-        const funcScope = path.scope;                   // the function’s own scope
-        const boundNames = new Set(Object.keys(funcScope.bindings));
-        // Also include the function’s own name (for FunctionDeclaration)
-        if (path.node.id && t.isIdentifier(path.node.id)) {
-          boundNames.add(path.node.id.name);
-        }
-
+        // --- 2) Free-Variable Analysis for Closure Capture ---
+        const funcScope = path.scope;
         const freeNames = new Set();
         path.traverse({
           Identifier(idPath) {
-            // Only real references, not declarations, keys, tracer calls, etc.
             if (!idPath.isReferencedIdentifier()) return;
-
-            // Skip catch clause parameters (e.g., _err, _err2)
-            if (idPath.parentPath.isCatchClause() && idPath.key === 'param') {
-                // Optional: console.log(`[traceScope FreeVar Check] Skipping catch clause param: ${idPath.node.name}`);
-                return;
-            }
+            if (idPath.findParent(p => p.node && p.node[SCOPE_INSTRUMENTED])) return;
             const name = idPath.node.name;
             if (SKIP_NAMES.has(name)) return;
-
-            // Avoid instrumentation of our own captureLocals or captureClosure AST
-            if (idPath.node[SCOPE_INSTRUMENTED]) return; // Use exported constant
-
-            // Find the binding (if any)
+            if (idPath.parentPath.isCatchClause() && idPath.key === 'param') return;
             const binding = idPath.scope.getBinding(name);
-            if (!binding) {
-              // No binding => likely a global; skip or include as you choose
-              return;
-            }
-            // If the binding’s defining scope is NOT the current function’s scope,
-            // then this is a free (outer) variable that we should capture.
-            // *** NEW CHECK ***
-            // Check if the binding scope's defining node is a CatchClause
-            if (binding.scope.path.isCatchClause()) {
-                // Optional: console.log(`[traceScope FreeVar Check] Skipping '${idPath.node.name}' because it is bound in a CatchClause.`);
-                return; // Don't treat catch parameters like _err as free variables
-            }
-            // *** END NEW CHECK ***
+            if (!binding) return;
+            if (binding.scope.path.isCatchClause()) return;
             if (binding.scope !== funcScope) {
-              freeNames.add(name);
+              if (funcScope.hasBinding(name, true)) {
+                freeNames.add(name);
+              }
             }
           },
-          // Don’t descend into nested functions
           Function(inner) { inner.skip(); }
         });
-        console.log('[traceScope Function Visitor] Identified freeNames:', freeNames);
 
-        // Build closure‐capture only if we found any true frees
-        const closureProps = Array.from(freeNames)
-          .map(name =>
-            t.objectProperty(t.identifier(name), t.identifier(name), false, true)
-          );
-       console.log('[traceScope Function Visitor] Generated closureProps:', closureProps);
-        if (closureProps.length > 0) {
-          console.log('[traceScope Function Visitor] Condition (closureProps.length > 0) met:', closureProps.length > 0);
-          // Generate an ID for this function’s closure
-          const closureId = generateUniqueId('closure-'); // Use helper function
-          const captureClosureStmt = t.expressionStatement(
-            t.callExpression(
-              t.memberExpression(t.identifier("Tracer"), t.identifier("captureClosure")),
-              [
-                t.stringLiteral(closureId),
-                t.stringLiteral(parentId),
-                t.objectExpression(closureProps)
-              ]
-            )
-          );
-          console.log('[traceScope Function Visitor] Created captureClosureStmt AST node:', captureClosureStmt);
-          captureClosureStmt[SCOPE_INSTRUMENTED] = true; // Use exported constant
+        console.log(`[traceScope Closure] Found free variables: ${freeNames.size > 0 ? [...freeNames].join(', ') : 'None'} for function ${functionLexicalId}`);
 
-          // Insert *after* the function declaration
-          const stmtParent = path.getStatementParent();
-          if (stmtParent) {
-            stmtParent.insertAfter(captureClosureStmt);
-            console.log('[traceScope Function Visitor] Executed stmtParent.insertAfter(captureClosureStmt)');
-          }
+        if (freeNames.size > 0) {
+            const closureProps = Array.from(freeNames).map(name =>
+                t.objectProperty(t.identifier(name), t.identifier(name), false, true)
+            );
+
+            const captureClosureStmt = t.expressionStatement(
+                t.callExpression(
+                    t.memberExpression(t.identifier("Tracer"), t.identifier("captureClosure")),
+                    [
+                        t.stringLiteral(functionLexicalId),
+                        t.stringLiteral(parentLexicalId),
+                        t.objectExpression(closureProps)
+                    ]
+                )
+            );
+            captureClosureStmt[SCOPE_INSTRUMENTED] = true;
+
+            const stmtParent = path.getStatementParent();
+            if (stmtParent && !stmtParent.getData('closureCaptureInstrumented')) {
+                try {
+                    stmtParent.insertAfter(captureClosureStmt);
+                    stmtParent.setData('closureCaptureInstrumented', true);
+                    console.log(`[traceScope Closure] Inserted captureClosure statement after parent statement for function ${functionLexicalId}.`);
+                } catch (e) {
+                    console.error(`[traceScope Closure] Error inserting captureClosure statement for ${functionLexicalId}:`, e);
+                }
+            } else if (!stmtParent) {
+                console.warn(`[traceScope Closure] Could not find statement parent for function ${functionLexicalId}. Capture statement not inserted.`);
+            } else {
+                console.log(`[traceScope Closure] Parent statement already instrumented for closure capture. Skipping insert for ${functionLexicalId}.`);
+            }
         }
       }
     }
