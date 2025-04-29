@@ -17,7 +17,8 @@ module.exports = function traceScope({ types: t }) {
         // --- Generate unique scopeId for this function ---
         const scopeId = path.scope.generateUidIdentifier("funcScopeId").name + '-' + (typeof nextId === 'function' ? nextId() : Math.floor(Math.random() * 100000));
         path.scope.data = path.scope.data || {};
-        path.scope.data.scopeId = scopeId;
+        path.node._funcScopeId = scopeId; // Attach ID to the node
+console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', scopeId, 'NodeID:', path.node._funcScopeId);
 
         // --- Determine parentId (enclosing function or global) ---
         let parentId = null;
