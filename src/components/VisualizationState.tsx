@@ -108,10 +108,12 @@ React.useEffect(() => {
             if ((variable.type === 'reference' || variable.type === 'function') && heapObjects[variable.heapId]) {
                 newEdges.push({
                     id: `edge-${frameId}-${name}-heap-${variable.heapId}`,
-                    source: frameId, // Source from the frame node itself
+                    source: frameId,
                     target: `heap-${variable.heapId}`,
-                    style: { stroke: '#3b82f6', strokeWidth: 1.5 }, // Blue for references
+                    style: { stroke: '#3b82f6', strokeWidth: 2.5 },
                     type: 'smoothstep',
+                    animated: true,
+                    label: name,
                 });
             }
         });
@@ -140,8 +142,10 @@ React.useEffect(() => {
                     id: `edge-${envId}-${name}-heap-${variable.heapId}`,
                     source: envId,
                     target: `heap-${variable.heapId}`,
-                    style: { stroke: '#3b82f6', strokeWidth: 1.5 },
+                    style: { stroke: '#3b82f6', strokeWidth: 2.5 },
                     type: 'smoothstep',
+                    animated: true,
+                    label: name,
                 });
             }
         });
@@ -189,7 +193,8 @@ React.useEffect(() => {
                     target: targetId,
                     label: 'closure',
                     type: 'smoothstep',
-                    style: { stroke: '#a855f7', strokeDasharray: '5 5', strokeWidth: 1 }, // Purple dashed
+                    style: { stroke: '#a855f7', strokeDasharray: '5 5', strokeWidth: 2.5 },
+                    animated: true,
                 });
             } else {
                  console.warn(`Defining scope node not found for heap object ${obj.id}. Target IDs checked: ${frameTargetId}, ${envTargetId}`);

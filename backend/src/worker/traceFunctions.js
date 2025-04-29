@@ -14,6 +14,29 @@ module.exports = function traceFunctions({ types: t }) {
 
   return {
     visitor: {
+      CallExpression(path) {
+        // Only instrument direct function calls, not super, import, etc.
+        if (!path.node.loc) return;
+        const t = path.hub.file.opts.parserOpts.plugins.includes("typescript") ? path.hub.file.constructor.types : require("@babel/types");
+        const callId = path.scope.generateUidIdentifier("callId");
+        const callSiteLine = t.numericLiteral(path.node.loc.start.line);
+
+        // Insert: const _callId = nextId();
+        const callIdDecl = t.variableDeclaration("const", [
+          t.variableDeclarator(callId, t.callExpression(t.identifier("nextId"), []))
+        ]);
+        // Insert: Tracer.beforeCall(_callId, callSiteLine);
+        const beforeCallStmt = t.expressionStatement(
+          t.callExpression(
+            t.memberExpression(t.identifier("Tracer"), t.identifier("beforeCall")),
+            [callId, callSiteLine]
+          )
+        );
+        // Insert both before the call expression's statement
+        if (path.parentPath.isExpressionStatement()) {
+          path.parentPath.insertBefore([callIdDecl, beforeCallStmt]);
+        }
+      },
       Function(path) {
         visitorRan = true; // Mark that the visitor was entered
         console.log(`[traceFunctions] Entered Function visitor for node type: ${path.node.type}, Name: ${path.node.id?.name || '(anon)'}`); // Log entry
@@ -211,38 +234,52 @@ module.exports = function traceFunctions({ types: t }) {
         const start = funcPath.node.loc ? t.numericLiteral(funcPath.node.loc.start.line) : t.nullLiteral();
         const end = funcPath.node.loc ? t.numericLiteral(funcPath.node.loc.end.line) : t.nullLiteral();
 
-        // --- Correct Scope ID Lookup ---
+        // --- Accurate Scope ID Lookup ---
         // Get the scope ID directly from the function node property set by traceScope.js
         let scopeId = "global"; // Default
-        let foundScope = false;
-        if (funcPath && funcPath.node && funcPath.node._funcScopeId) {
-            scopeId = funcPath.node._funcScopeId;
-            foundScope = true;
-            console.log(`[traceFunctions ReturnStatement] Found scopeId '${scopeId}' on funcPath.node._funcScopeId`);
-        } else {
-            // Traverse up the scope chain to find a parent function node with _funcScopeId
-            let parentScope = funcPath && funcPath.scope ? funcPath.scope.parent : null;
-            while (parentScope) {
-                if (
-                    parentScope.block &&
-                    (parentScope.block.type === "FunctionDeclaration" ||
-                     parentScope.block.type === "FunctionExpression" ||
-                     parentScope.block.type === "ArrowFunctionExpression") &&
-                    parentScope.block._funcScopeId
-                ) {
-                    scopeId = parentScope.block._funcScopeId;
-                    foundScope = true;
-                    console.log(`[traceFunctions ReturnStatement] Found scopeId '${scopeId}' on parentScope.block._funcScopeId`);
-                    break;
+
+        if (funcPath && funcPath.node) {
+            if (Object.prototype.hasOwnProperty.call(funcPath.node, '_funcScopeId')) {
+                scopeId = funcPath.node._funcScopeId;
+                console.log(`[traceFunctions ReturnStatement] Found scopeId '${scopeId}' on funcPath.node._funcScopeId`);
+            } else {
+                // Traverse up the scope chain to find a parent function node with _funcScopeId
+                let parentScope = funcPath && funcPath.scope ? funcPath.scope.parent : null;
+                let foundParent = false;
+                while (parentScope) {
+                    if (
+                        parentScope.block &&
+                        (parentScope.block.type === "FunctionDeclaration" ||
+                         parentScope.block.type === "FunctionExpression" ||
+                         parentScope.block.type === "ArrowFunctionExpression") &&
+                        parentScope.block._funcScopeId
+                    ) {
+                        scopeId = parentScope.block._funcScopeId;
+                        foundParent = true;
+                        console.log(`[traceFunctions ReturnStatement] Found scopeId '${scopeId}' on parentScope.block._funcScopeId`);
+                        break;
+                    }
+                    parentScope = parentScope.parent;
                 }
-                parentScope = parentScope.parent;
+                if (!foundParent) {
+                    // Function scope found but _funcScopeId missing: warn and do NOT default to global
+                    if (funcPath.isFunction()) {
+                        console.warn(`[traceFunctions ReturnStatement] Function scope found for '${fnName}' but _funcScopeId missing! This is likely a bug. Marking scopeId as 'unknown-missing-funcScopeId'.`);
+                        scopeId = "unknown-missing-funcScopeId";
+                    } else {
+                        // Not in a function, use global
+                        scopeId = "global";
+                        console.warn(`[traceFunctions ReturnStatement] Not in a function scope for ${fnName}, using 'global'.`);
+                    }
+                }
             }
-            if (!foundScope) {
-                console.warn(`[traceFunctions ReturnStatement] Could not find _funcScopeId on funcPath node or any parent function node for ${fnName}. Defaulting to 'global'. funcPath node:`, funcPath?.node);
-            }
+        } else {
+            // No function path, use global
+            scopeId = "global";
+            console.warn(`[traceFunctions ReturnStatement] No funcPath for ${fnName}, using 'global'.`);
         }
         console.log(`[traceFunctions ReturnStatement] Using exitingScopeId: ${scopeId} for function: ${fnName}`);
-        // --- End Correct Scope ID Lookup ---
+        // --- End Accurate Scope ID Lookup ---
 
          // Find the traceId identifier declared in the function scope
         let traceIdIdentifier;

@@ -9,6 +9,7 @@ function storyReducer(rawEvents = []) { // Accept single argument with default
   const scopeStack = ['global'];
   let nextScopeIdCounter = 0;
   const pendingPersistence = new Set(); // Store scope IDs needing persistence
+  const heapSnapshot = {}; // heapId -> heap object/array structure
 
   // Helper to deep clone variables for snapshotting
   function cloneVars(vars) {
@@ -75,11 +76,24 @@ function storyReducer(rawEvents = []) { // Accept single argument with default
   };
   console.log('[storyReducer] Initialized activeScopes: ' + JSON.stringify(activeScopes, null, 2));
 
+  // Use a stack to track callSiteLine for nested calls
+  const callSiteLineStack = [];
   for (var i = 0; i < rawEvents.length; i++) {
     var evt = rawEvents[i];
     console.log('[storyReducer] Processing raw event [' + i + ']: ' + evt.type);
     try {
       switch (evt.type) {
+        case 'BeforeCall': {
+          // Push the callSiteLine for the next EnterFunction event
+          callSiteLineStack.push(evt.payload.callSiteLine);
+          break; // Do not emit a story event for BeforeCall
+        }
+        case 'HEAP_UPDATE': {
+          // Update heap snapshot
+          const { heapId, value } = evt.payload;
+          heapSnapshot[heapId] = value;
+          break;
+        }
         case 'Locals': {
           var scopeId = evt.payload.scopeId;
           var parentId = evt.payload.parentId;
@@ -145,7 +159,12 @@ function storyReducer(rawEvents = []) { // Accept single argument with default
             console.warn('[storyReducer] VarWrite: Scope ' + sid + ' not found! Creating placeholder.');
             activeScopes[sid] = { scopeId: sid, type: 'unknown', name: sid, variables: {}, parentId: null, isPersistent: false, thisBinding: null };
           }
-          activeScopes[sid].variables[name] = { value: val, type: vtype };
+          // If value is a heap reference, store as such
+          if (val && val.type === 'reference' && val.heapId) {
+            activeScopes[sid].variables[name] = { value: { type: 'reference', heapId: val.heapId, valueType: vtype }, type: vtype };
+          } else {
+            activeScopes[sid].variables[name] = { value: val, type: vtype };
+          }
           // Task 4.1: Log updated variable object
           console.log(`[storyReducer] Updated variable '${name}' in scope '${sid}':`, JSON.stringify(activeScopes[sid].variables[name], null, 2));
           story.push({
@@ -171,6 +190,7 @@ function storyReducer(rawEvents = []) { // Accept single argument with default
               col: evt.payload.col,
               snippet: evt.payload.snippet,
               scopes: snapshot2,
+              heap: { ...heapSnapshot },
               statementType: evt.payload.statementType
             }
           });
@@ -179,12 +199,14 @@ function storyReducer(rawEvents = []) { // Accept single argument with default
         }
         case 'EnterFunction': {
           console.log('[storyReducer] Handling EnterFunction for scope ' + evt.payload.newScopeId);
+          // Pop the most recent callSiteLine from the stack, if available
+          let callSiteLine = callSiteLineStack.length > 0 ? callSiteLineStack.pop() : evt.payload.callSiteLine;
           story.push({
             type: 'CALL',
             payload: {
               funcName: evt.payload.name,
               args: [],
-              callSiteLine: evt.payload.callSiteLine,
+              callSiteLine: callSiteLine,
               newScopeId: evt.payload.newScopeId,
               closureScopeId: evt.payload.closureScopeId,
               thisBinding: evt.payload.thisBinding

@@ -30,7 +30,7 @@ console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${J
         }
         path.node[ALREADY] = true; // Mark the assignment expression itself
 
-        // --- New Scope Lookup Logic ---
+        // --- Accurate Scope Lookup Logic ---
         let scopeId = "global"; // Default
         const binding = path.scope.getBinding(name); // Find where 'name' is declared
 
@@ -41,18 +41,23 @@ console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${J
                 funcScope = funcScope.parent;
             }
 
-            // Check if the found scope's *node* has the _funcScopeId property
-            if (funcScope && funcScope.path && funcScope.path.node && Object.prototype.hasOwnProperty.call(funcScope.path.node, '_funcScopeId')) {
-                scopeId = funcScope.path.node._funcScopeId;
-                console.log(`[traceVariables][${path.type}] Found scopeId '${scopeId}' for '${name}' via binding lookup in funcScope.path.node._funcScopeId.`);
+            if (funcScope && funcScope.path.isFunction()) {
+                if (funcScope.path.node && Object.prototype.hasOwnProperty.call(funcScope.path.node, '_funcScopeId')) {
+                    scopeId = funcScope.path.node._funcScopeId;
+                    console.log(`[traceVariables][${path.type}] Found scopeId '${scopeId}' for '${name}' via funcScope.path.node._funcScopeId.`);
+                } else {
+                    // Function scope found but _funcScopeId missing: warn and do NOT default to global
+                    console.warn(`[traceVariables][${path.type}] Function scope found for '${name}' but _funcScopeId missing! This is likely a bug. Marking scopeId as 'unknown-missing-funcScopeId'.`);
+                    scopeId = "unknown-missing-funcScopeId";
+                }
             } else if (funcScope && funcScope.path.isProgram()) {
                 // If the binding is in the program scope, it's global
                 scopeId = "global";
                 console.log(`[traceVariables][${path.type}] Binding for '${name}' found in Program scope, using 'global'.`);
             } else {
-                // Fallback if no function scope with _funcScopeId is found above the binding
-                console.warn(`[traceVariables][${path.type}] Binding for '${name}' found, but couldn't find parent function scope with node._funcScopeId. Defaulting to 'global'.`);
-                scopeId = "global";
+                // Fallback if no function or program scope found
+                console.warn(`[traceVariables][${path.type}] Could not find function or program scope for '${name}'. Marking as 'unknown-no-scope'.`);
+                scopeId = "unknown-no-scope";
             }
         } else {
             // No binding found, assume global (could be undeclared or built-in)
@@ -60,7 +65,7 @@ console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${J
             console.log(`[traceVariables][${path.type}] No binding found for '${name}' in scope chain, assuming 'global'.`);
         }
         console.log(`[traceVariables Scope Lookup - Assign]: varName=${name}, bindingScopeId=${binding?.scope.uid}, finalScopeId=${scopeId}`);
-        // --- End of New Scope Lookup Logic ---
+        // --- End of Accurate Scope Lookup Logic ---
 
         // Determine valueType from path.node.right
         let valueType = "unknown";
@@ -242,41 +247,41 @@ console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${J
         }
         // Mark it later, only if insertion succeeds
 
-        // --- New Scope Lookup Logic ---
+        // --- Accurate Scope Lookup Logic ---
         let scopeId = "global"; // Default
         const binding = path.scope.getBinding(name); // Find where 'name' is declared
 
         if (binding) {
             let funcScope = binding.scope;
-if (name === '_traceId') {
-      console.log(`[traceVariables Scope Debug - _traceId funcScope]: name=${name}, funcScope=`, funcScope, `, typeof=${typeof funcScope}, funcScope?.type=${funcScope?.type}`);
-    }
             // Traverse up to find the nearest function or program scope
             while (funcScope && !funcScope.path.isFunction() && !funcScope.path.isProgram()) {
                 funcScope = funcScope.parent;
             }
 
-            // Check if the found scope's *node* has the _funcScopeId property
-console.log('[traceVariables Scope Data Check]:', 'Var:', name, 'ScopeUID:', funcScope?.uid, 'ScopeNodeID:', funcScope?.path?.node?._funcScopeId);
-            if (funcScope && funcScope.path && funcScope.path.node && Object.prototype.hasOwnProperty.call(funcScope.path.node, '_funcScopeId')) {
-                scopeId = funcScope.path.node._funcScopeId;
-                console.log(`[traceVariables][${path.type}] Found scopeId '${scopeId}' for '${name}' via binding lookup in funcScope.path.node._funcScopeId.`);
+            if (funcScope && funcScope.path.isFunction()) {
+                if (funcScope.path.node && Object.prototype.hasOwnProperty.call(funcScope.path.node, '_funcScopeId')) {
+                    scopeId = funcScope.path.node._funcScopeId;
+                    console.log(`[traceVariables][${path.type}] Found scopeId '${scopeId}' for '${name}' via funcScope.path.node._funcScopeId.`);
+                } else {
+                    // Function scope found but _funcScopeId missing: warn and do NOT default to global
+                    console.warn(`[traceVariables][${path.type}] Function scope found for '${name}' but _funcScopeId missing! This is likely a bug. Marking scopeId as 'unknown-missing-funcScopeId'.`);
+                    scopeId = "unknown-missing-funcScopeId";
+                }
             } else if (funcScope && funcScope.path.isProgram()) {
                 // If the binding is in the program scope, it's global
                 scopeId = "global";
                 console.log(`[traceVariables][${path.type}] Binding for '${name}' found in Program scope, using 'global'.`);
             } else {
-                // Fallback if no function scope with _funcScopeId is found above the binding
-                console.warn(`[traceVariables][${path.type}] Binding for '${name}' found, but couldn't find parent function scope with node._funcScopeId. Defaulting to 'global'.`);
-                scopeId = "global";
+                // Fallback if no function or program scope found
+                console.warn(`[traceVariables][${path.type}] Could not find function or program scope for '${name}'. Marking as 'unknown-no-scope'.`);
+                scopeId = "unknown-no-scope";
             }
         } else {
             // No binding found, assume global (could be undeclared or built-in)
-            // Note: For VariableDeclarator, a binding should generally exist unless code is malformed.
             scopeId = "global";
             console.log(`[traceVariables][${path.type}] No binding found for '${name}' in scope chain, assuming 'global'.`);
         }
-        // --- End of New Scope Lookup Logic ---
+        // --- End of Accurate Scope Lookup Logic ---
 
         // Log scope lookup details *after* the loop
 // --- DETAILED SCOPE DEBUG LOGGING ---

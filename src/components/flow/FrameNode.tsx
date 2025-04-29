@@ -10,11 +10,26 @@ interface FrameNodeProps {
 
 const FrameNode: React.FC<FrameNodeProps> = ({ data, id }) => {
   return (
-    <div className="react-flow__node-default" style={{ padding: '10px', minWidth: '150px', background: '#fff', border: '1px solid #ddd' }}>
-       <Handle type="target" position={Position.Left} style={{ background: '#555' }} />
-      <div className="font-bold text-sm mb-1">{data.name || 'Anonymous Function'}</div>
-      <VariableDisplay variables={data.variables} scopeId={`frame-${id}`} />
-       <Handle type="source" position={Position.Right} style={{ background: '#555' }} />
+    <div
+      className="react-flow__node-default bg-white border border-sky-300 rounded-lg shadow-md px-4 py-3 min-w-[170px] relative flex flex-col gap-1"
+    >
+      <Handle type="target" position={Position.Left} style={{ background: '#0ea5e9' }} />
+      <div className="absolute top-2 right-3" title="Frame">
+        {/* Stack/Frame icon */}
+        <span className="text-sky-400" style={{ fontSize: 20 }}>🗂️</span>
+      </div>
+      <div className="font-bold text-sky-700 text-sm mb-1 pr-7">
+        {data.name || 'Anonymous Function'}
+      </div>
+      <VariableDisplay
+        variables={Object.entries(data.variables).map(([varName, variable]: [string, any]) => ({
+          varName,
+          value: variable.value !== undefined ? variable.value : variable,
+          bindingType: variable.bindingType,
+        }))}
+        scopeId={`frame-${id}`}
+      />
+      <Handle type="source" position={Position.Right} style={{ background: '#0ea5e9' }} />
     </div>
   );
 };

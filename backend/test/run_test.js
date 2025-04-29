@@ -110,6 +110,7 @@ try {
           Tracer.logEvent('Closure', { closureId, parentId, bindings: displayBindings });
       },
       iterateLoop: () => { /* No-op for this test */ }, // Add dummy iterateLoop
+    beforeCall: () => { /* No-op for test runner */ },
     };
   
     const sandbox = {

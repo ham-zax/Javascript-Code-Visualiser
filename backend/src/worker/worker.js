@@ -10,6 +10,54 @@ const _ = require('lodash');
 // Falafel removed
 const prettyFormat = require('pretty-format').default; // Import default export
 
+// Heap object tracking infrastructure
+const heapRegistry = {};
+const objectToHeapId = new WeakMap();
+let nextHeapId = 1;
+
+function getNextHeapId() {
+  return 'h' + (nextHeapId++);
+}
+
+// Depth-limited, circular-safe serializer for heap objects/arrays
+function serializeForHeap(target, depth = 0, maxDepth = 2, visited = new WeakSet()) {
+  if (target === null) return null;
+  if (typeof target !== 'object') return target;
+  if (visited.has(target)) return { type: 'circular', heapId: objectToHeapId.get(target) || null };
+
+  visited.add(target);
+
+  // Assign heapId if not already assigned
+  let heapId = objectToHeapId.get(target);
+  if (!heapId) {
+    heapId = getNextHeapId();
+    objectToHeapId.set(target, heapId);
+  }
+
+  if (Array.isArray(target)) {
+    if (depth >= maxDepth) return { type: 'array', heapId };
+    return {
+      type: 'array',
+      heapId,
+      elements: target.map(v => serializeForHeap(v, depth + 1, maxDepth, visited))
+    };
+  } else {
+    if (depth >= maxDepth) return { type: 'object', heapId };
+    const out = {};
+    for (const k of Object.keys(target)) {
+      try {
+        out[k] = serializeForHeap(target[k], depth + 1, maxDepth, visited);
+      } catch (e) {
+        out[k] = '[Unserializable]';
+      }
+    }
+    return {
+      type: 'object',
+      heapId,
+      properties: out
+    };
+  }
+}
 const { traceLoops } = require('./loopTracer');
 const traceLines = require('./traceLines');
 // const traceScopeAndClosures = require('./traceScopeAndClosures'); // Replaced
@@ -203,6 +251,14 @@ const EVENT_LIMIT = 500;
 const Tracer = {
   // Enhanced methods for event emission
 
+  beforeCall: (callId, callSiteLine) => postEvent({
+    type: "BeforeCall",
+    payload: {
+      callId,
+      callSiteLine
+    }
+  }),
+
   enterFunc: (id, name, start, end, newScopeId, thisBinding, callSiteLine) => postEvent({
     type: "EnterFunction",
     payload: {
@@ -258,8 +314,47 @@ const Tracer = {
 
   // Enhanced variable tracking
   varWrite: (scopeId, name, val, valueType) => {
-    console.log(`[Tracer.varWrite] Called with: scopeId=${scopeId}, name=${name}, val=`, val, `, valueType=${valueType}`); // Log entry and args
-    console.log(`[Tracer.varWrite] Calling postEvent for VarWrite`);
+    console.log(`[Tracer.varWrite] Called with: scopeId=${scopeId}, name=${name}, val=`, val, `, valueType=${valueType}`);
+
+    // Detect heap objects/arrays (not null, not function)
+    if (
+      val !== null &&
+      typeof val === 'object' &&
+      (Array.isArray(val) || Object.prototype.toString.call(val) === '[object Object]')
+    ) {
+      // Assign heapId and serialize
+      let heapId = objectToHeapId.get(val);
+      if (!heapId) {
+        heapId = getNextHeapId();
+        objectToHeapId.set(val, heapId);
+      }
+      const serialized = serializeForHeap(val, 0, 2, new WeakSet());
+      heapRegistry[heapId] = serialized;
+
+      // Emit HEAP_UPDATE event
+      postEvent({
+        type: "HEAP_UPDATE",
+        payload: {
+          heapId,
+          type: Array.isArray(val) ? 'array' : 'object',
+          value: serialized
+        }
+      });
+
+      // Emit VarWrite with reference
+      postEvent({
+        type: "VarWrite",
+        payload: {
+          scopeId,
+          name,
+          val: { type: 'reference', heapId, valueType },
+          valueType
+        }
+      });
+      return val;
+    }
+
+    // For primitives/functions, emit as before
     postEvent({
       type: "VarWrite",
       payload: {
@@ -269,7 +364,6 @@ const Tracer = {
         valueType
       }
     });
-    console.log(`[Tracer.varWrite] postEvent called successfully`);
     return val;
   },
   varRead: (name, val) => {
@@ -328,17 +422,17 @@ const vm = new VM({
   timeout: 6000, // Keep existing timeout
   sandbox: {
     nextId,
-    Tracer,
+    Tracer, // Expose full Tracer object with all methods
     fetch,
     _,
     lodash: _,
     setTimeout,
     queueMicrotask,
-    prettyFormat, // <<< ADD prettyFormat TO SANDBOX
+    prettyFormat,
     console: {
-      log: Tracer.log,
-      warn: Tracer.warn,
-      error: Tracer.error,
+      log: (...args) => Tracer.log(...args),
+      warn: (...args) => Tracer.warn(...args),
+      error: (...args) => Tracer.error(...args),
     },
   },
 });

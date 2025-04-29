@@ -7,7 +7,7 @@ import { usePlaybackStore, TraceEvent } from '../store/playbackStore'; // Import
 import { Frame } from './CallStackPanel'; // Import Frame interface
 
 // Define the structure for a highlight
-export type HighlightType = 'current' | 'return' | 'call';
+export type HighlightType = 'current' | 'return' | 'call' | 'next' | 'prev';
 export interface Highlight {
   line: number;
   type: HighlightType;
@@ -70,29 +70,99 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
     return undefined;
   };
 
-  // Helper to get the highlights currently meant to be shown based on the event index (Memoized)
+  // Dual highlight logic: prevLine (last executed), nextLine (next to execute)
   const getHighlightsFromState = useCallback((): Highlight[] => {
-    if (idx < 0 || idx >= events.length) return [];
-    const currentEvent = events[idx];
-    let currentHighlights: Highlight[] = [];
-    if (currentEvent.type === 'line') {
-      currentHighlights.push({ line: currentEvent.payload.line, type: 'current' });
-    } else if (currentEvent.type === 'call') {
-      currentHighlights.push({ line: currentEvent.payload.line, type: 'call' });
-    } else if (currentEvent.type === 'return') {
-      currentHighlights.push({ line: currentEvent.payload.line, type: 'return' });
-    } else if (currentEvent.type === 'console') {
-      // Highlight the line *before* the console log for context
-      let prevLineEventIdx = idx - 1;
-      while (prevLineEventIdx >= 0 && events[prevLineEventIdx].type !== 'line') {
-        prevLineEventIdx--;
+    if (idx < 0 || idx > events.length) return [];
+    // Inline deriveHighlightedLine logic (copied from App.tsx)
+    let nextLine: number | null = null;
+    let prevLine: number | null = null;
+
+    // Next line logic
+    if (
+      idx >= 0 &&
+      idx < events.length &&
+      events[idx].type === "STEP_LINE"
+    ) {
+      const payload = events[idx].payload as { line?: number };
+      if (typeof payload.line === "number") {
+        nextLine = payload.line;
       }
-      if (prevLineEventIdx >= 0) {
-        currentHighlights.push({ line: events[prevLineEventIdx].payload.line, type: 'current' });
+    } else if (idx >= 0 && idx < events.length) {
+      // Not a STEP_LINE, try to look ahead for the next STEP_LINE
+      for (let i = idx + 1; i < events.length; i++) {
+        if (events[i].type === "STEP_LINE") {
+          const payload = events[i].payload as { line?: number };
+          if (typeof payload.line === "number") {
+            nextLine = payload.line;
+            break;
+          }
+        }
       }
     }
-    return currentHighlights;
-  }, [idx, events]); // Dependencies for useCallback
+
+    // Previous line logic
+    if (idx > 0) {
+      const prevEvent = events[idx - 1];
+      if (prevEvent.type === "STEP_LINE") {
+        const payload = prevEvent.payload as { line?: number };
+        if (typeof payload.line === "number") {
+          prevLine = payload.line;
+        }
+      } else if (prevEvent.type === "CALL") {
+        const payload = prevEvent.payload as { callSiteLine?: number };
+        if (typeof payload.callSiteLine === "number") {
+          prevLine = payload.callSiteLine;
+        } else {
+          // fallback: last STEP_LINE before CALL
+          for (let i = idx - 2; i >= 0; i--) {
+            if (events[i].type === "STEP_LINE") {
+              const p = events[i].payload as { line?: number };
+              if (typeof p.line === "number") {
+                prevLine = p.line;
+                break;
+              }
+            }
+          }
+        }
+      } else if (prevEvent.type === "RETURN") {
+        const payload = prevEvent.payload as { returnLine?: number };
+        if (typeof payload.returnLine === "number") {
+          prevLine = payload.returnLine;
+        } else {
+          // fallback: last STEP_LINE within the returned function
+          for (let i = idx - 2; i >= 0; i--) {
+            if (events[i].type === "STEP_LINE") {
+              const p = events[i].payload as { line?: number };
+              if (typeof p.line === "number") {
+                prevLine = p.line;
+                break;
+              }
+            }
+          }
+        }
+      } else {
+        // fallback: last STEP_LINE before idx
+        for (let i = idx - 1; i >= 0; i--) {
+          if (events[i].type === "STEP_LINE") {
+            const p = events[i].payload as { line?: number };
+            if (typeof p.line === "number") {
+              prevLine = p.line;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    const highlights: Highlight[] = [];
+    if (typeof prevLine === "number") {
+      highlights.push({ line: prevLine, type: "prev" });
+    }
+    if (typeof nextLine === "number") {
+      highlights.push({ line: nextLine, type: "next" });
+    }
+    return highlights;
+  }, [idx, events]);
 
   // Update animated positions based on current highlights and editor state (Memoized)
   const updateHighlightAndArrowPositions = useCallback(() => {
@@ -173,6 +243,8 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
           case 'current': className = 'highlight-current'; break;
           case 'return': className = 'highlight-return'; break;
           case 'call': className = 'highlight-call'; break;
+          case 'next': className = 'highlight-next-step'; break;
+          case 'prev': className = 'highlight-last-executed'; break;
           default: className = 'highlight-current';
         }
         return {
@@ -240,17 +312,32 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
     // Update Monaco decorations via the imperative handle
     handle.setHighlights(newHighlights);
 
-    // Handle Console Bubbles specifically for 'console' events
-    if (currentEvent.type === 'console' && currentEvent.payload?.line) {
-      const line = currentEvent.payload.line;
-      const message = formatConsoleMessage(currentEvent.payload.args || []);
-      const id = `bubble-${line}-${Date.now()}`;
+    // Handle Console Bubbles specifically for 'CONSOLE' events
+    if (currentEvent.type === 'CONSOLE') {
+      // Try to find the most recent STEP_LINE event before this console event for line number
+      let line: number | null = null;
+      for (let i = idx - 1; i >= 0; i--) {
+        if (events[i].type === "STEP_LINE") {
+          const payload = events[i].payload as { line?: number };
+          if (typeof payload.line === "number") {
+            line = payload.line;
+            break;
+          }
+        }
+      }
+      if (line !== null) {
+        const message =
+          typeof (currentEvent.payload as any).text === "string"
+            ? (currentEvent.payload as any).text
+            : "";
+        const id = `bubble-${line}-${Date.now()}`;
 
-      const timeoutId = setTimeout(() => {
-        setConsoleBubbles(prev => prev.filter(b => b.id !== id));
-      }, 2000); // Auto-remove after 2 seconds
+        const timeoutId = setTimeout(() => {
+          setConsoleBubbles(prev => prev.filter(b => b.id !== id));
+        }, 2000); // Auto-remove after 2 seconds
 
-      setConsoleBubbles(prev => [...prev, { id, line, message, timeoutId }]);
+        setConsoleBubbles(prev => [...prev, { id, line, message, timeoutId }]);
+      }
     }
 
     // Note: updateHighlightAndArrowPositions is called inside handle.setHighlights

@@ -39,6 +39,7 @@ export interface VariableInfo {
   value: any | { type: 'functionRef'; id: string };
   isClosure?: boolean;
   hasChanged?: boolean;
+  bindingType?: "local" | "global" | "closure";
 }
 
 export interface DisplayScopeInfo {
