@@ -321,44 +321,46 @@ module.exports = function traceFunctions({ types: t }) {
         console.log(`[traceFunctions ReturnStatement] Using exitingScopeId: ${scopeId} for function: ${fnName}`);
         // --- End Accurate Scope ID Lookup ---
 
-         // Find the traceId identifier declared in the function scope
+        // --- Find the traceId identifier declared in the function scope ---
         let traceIdIdentifier;
         // const funcPath = path.getFunctionParent(); // Already defined above
 
         if (funcPath && funcPath.scope) {
-            // Attempt 1: Find binding by the original base name "traceId"
-            // Babel's scope analysis should handle the unique generated name (_traceIdX)
+            // Attempt 1: Use Babel's scope analysis to find the binding for "traceId".
+            // This is the preferred and most robust method, as Babel should track the unique generated name (e.g., _traceIdX).
             const binding = funcPath.scope.getBinding("traceId");
 
             if (binding && binding.identifier) {
-                 traceIdIdentifier = binding.identifier;
-                 console.log(`[traceFunctions ReturnStatement] Found traceId binding identifier (name: '${traceIdIdentifier.name}') via getBinding.`);
+                traceIdIdentifier = binding.identifier;
+                console.log(`[traceFunctions ReturnStatement] Found traceId binding identifier (name: '${traceIdIdentifier.name}') via getBinding.`);
             } else {
-                 // Attempt 2: If getBinding didn't work, manually find the VariableDeclarator
-                 // This relies on the structure created by the Function visitor (const _traceId = nextId();)
-                 console.log(`[traceFunctions ReturnStatement] getBinding('traceId') failed. Attempting manual search...`);
-                 const functionBodyPaths = funcPath.get('body.body'); // Path to the array of statement paths
-                 if (Array.isArray(functionBodyPaths)) {
-                     const traceIdDeclarationPath = functionBodyPaths.find(
-                         stmtPath => stmtPath.isVariableDeclaration() &&
-                                     stmtPath.node.declarations.length > 0 &&
-                                     stmtPath.node.declarations[0]?.id?.name?.startsWith('_traceId') // Heuristic match based on Function visitor
-                     );
-                     if (traceIdDeclarationPath) {
-                         traceIdIdentifier = traceIdDeclarationPath.node.declarations[0].id;
-                         console.log(`[traceFunctions ReturnStatement] Found traceId identifier (name: '${traceIdIdentifier.name}') via manual search.`);
-                     } else {
-                         console.log(`[traceFunctions ReturnStatement] Manual search for traceId declaration also failed.`);
-                     }
-                 } else {
-                      console.log(`[traceFunctions ReturnStatement] Could not get function body paths for manual search.`);
-                 }
+                // Attempt 2: If getBinding fails (which can happen in rare Babel edge cases),
+                // manually search the function body for a VariableDeclarator whose name matches the generated _traceId pattern.
+                // This relies on the structure created by the Function visitor (const _traceId = nextId();)
+                console.log(`[traceFunctions ReturnStatement] getBinding('traceId') failed. Attempting manual search...`);
+                const functionBodyPaths = funcPath.get('body.body'); // Path to the array of statement paths
+                if (Array.isArray(functionBodyPaths)) {
+                    const traceIdDeclarationPath = functionBodyPaths.find(
+                        stmtPath => stmtPath.isVariableDeclaration() &&
+                                    stmtPath.node.declarations.length > 0 &&
+                                    stmtPath.node.declarations[0]?.id?.name?.startsWith('_traceId') // Heuristic match based on Function visitor
+                    );
+                    if (traceIdDeclarationPath) {
+                        traceIdIdentifier = traceIdDeclarationPath.node.declarations[0].id;
+                        console.log(`[traceFunctions ReturnStatement] Found traceId identifier (name: '${traceIdIdentifier.name}') via manual search.`);
+                    } else {
+                        console.log(`[traceFunctions ReturnStatement] Manual search for traceId declaration also failed.`);
+                    }
+                } else {
+                    console.log(`[traceFunctions ReturnStatement] Could not get function body paths for manual search.`);
+                }
             }
         } else {
-             console.log(`[traceFunctions ReturnStatement] Could not get function path or scope.`);
+            console.log(`[traceFunctions ReturnStatement] Could not get function path or scope.`);
         }
 
-        // Fallback if neither method worked
+        // Fallback: If neither method worked, fall back to a generic identifier.
+        // This is risky and may not always be correct, but prevents a crash if all else fails.
         if (!traceIdIdentifier) {
             console.error("[traceFunctions ReturnStatement] CRITICAL: Could not find traceId binding or identifier!");
             // Using the generated name pattern as a last resort fallback is risky but might prevent crashes
