@@ -1,70 +1,66 @@
+/**
+ * Returns true if the variable name is an internal tracer variable.
+ * Internal tracer variables start with _traceId or _callId.
+ */
+function isInternalTracerVar(name) {
+  return typeof name === "string" && (name.startsWith("_traceId") || name.startsWith("_callId"));
+}
+
 const traceVariablesVisitor = (t, ALREADY, SKIP) => ({
     // Wrap the RHS of x = expr as x = Tracer.varWrite("x", expr)
     AssignmentExpression(path) {
-console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${JSON.stringify(path.node.loc)}`);
+        const left = path.node.left;
+        if (!t.isIdentifier(left)) return;
+        const name = left.name;
+        if (isInternalTracerVar(name)) {
+          return;
+        }
+        if (SKIP.has(name)) {
+          return;
+        }
         // Prevent infinite recursion if the RHS is already a Tracer call
         if (path.get("right").isCallExpression() &&
             path.get("right.callee").isMemberExpression() &&
             path.get("right.callee.object").isIdentifier({ name: "Tracer" })) {
           return;
         }
-        
-        console.log(`[traceVariables] AssignmentExpression: Entering for node`, path.node);
-        const left = path.node.left;
-        if (!t.isIdentifier(left)) return;
-        const name = left.name;
-        console.log(`[traceVariables] AssignmentExpression: Considering left.name = ${name}`);
-        if (SKIP.has(name)) {
-          console.log(`[traceVariables] AssignmentExpression: SKIP_NAMES check PASSED for ${name}`);
-          return;
-        } else {
-          console.log(`[traceVariables] AssignmentExpression: SKIP_NAMES check FAILED for ${name}`);
-        }
-
-        // Check if already instrumented by this specific logic
         if (path.node[ALREADY]) {
-          console.log(`[traceVariables] AssignmentExpression: ALREADY symbol check PASSED for ${name}`);
           return;
-        } else {
-          console.log(`[traceVariables] AssignmentExpression: ALREADY symbol check FAILED for ${name}`);
         }
         path.node[ALREADY] = true; // Mark the assignment expression itself
 
         // --- Accurate Scope Lookup Logic ---
         let scopeId = "global"; // Default
-        const binding = path.scope.getBinding(name); // Find where 'name' is declared
 
-        if (binding) {
-            let funcScope = binding.scope;
-            // Traverse up to find the nearest function or program scope
-            while (funcScope && !funcScope.path.isFunction() && !funcScope.path.isProgram()) {
-                funcScope = funcScope.parent;
-            }
-
-            if (funcScope && funcScope.path.isFunction()) {
-                if (funcScope.path.node && Object.prototype.hasOwnProperty.call(funcScope.path.node, '_funcScopeId')) {
-                    scopeId = funcScope.path.node._funcScopeId;
-                    console.log(`[traceVariables][${path.type}] Found scopeId '${scopeId}' for '${name}' via funcScope.path.node._funcScopeId.`);
-                } else {
-                    // Function scope found but _funcScopeId missing: warn and do NOT default to global
-                    console.warn(`[traceVariables][${path.type}] Function scope found for '${name}' but _funcScopeId missing! This is likely a bug. Marking scopeId as 'unknown-missing-funcScopeId'.`);
-                    scopeId = "unknown-missing-funcScopeId";
-                }
-            } else if (funcScope && funcScope.path.isProgram()) {
-                // If the binding is in the program scope, it's global
-                scopeId = "global";
-                console.log(`[traceVariables][${path.type}] Binding for '${name}' found in Program scope, using 'global'.`);
-            } else {
-                // Fallback if no function or program scope found
-                console.warn(`[traceVariables][${path.type}] Could not find function or program scope for '${name}'. Marking as 'unknown-no-scope'.`);
-                scopeId = "unknown-no-scope";
-            }
+        // Prefer innermost function's _funcScopeId if present (closure-aware)
+        let funcPath = path.getFunctionParent();
+        if (funcPath && funcPath.node && Object.prototype.hasOwnProperty.call(funcPath.node, '_funcScopeId')) {
+            scopeId = funcPath.node._funcScopeId;
         } else {
-            // No binding found, assume global (could be undeclared or built-in)
-            scopeId = "global";
-            console.log(`[traceVariables][${path.type}] No binding found for '${name}' in scope chain, assuming 'global'.`);
+            // Fallback to binding's declaration scope as before
+            const binding = path.scope.getBinding(name); // Find where 'name' is declared
+            if (binding) {
+                let funcScope = binding.scope;
+                // Traverse up to find the nearest function or program scope
+                while (funcScope && !funcScope.path.isFunction() && !funcScope.path.isProgram()) {
+                    funcScope = funcScope.parent;
+                }
+
+                if (funcScope && funcScope.path.isFunction()) {
+                    if (funcScope.path.node && Object.prototype.hasOwnProperty.call(funcScope.path.node, '_funcScopeId')) {
+                        scopeId = funcScope.path.node._funcScopeId;
+                    } else {
+                        scopeId = "unknown-missing-funcScopeId";
+                    }
+                } else if (funcScope && funcScope.path.isProgram()) {
+                    scopeId = "global";
+                } else {
+                    scopeId = "unknown-no-scope";
+                }
+            } else {
+                scopeId = "global";
+            }
         }
-        console.log(`[traceVariables Scope Lookup - Assign]: varName=${name}, bindingScopeId=${binding?.scope.uid}, finalScopeId=${scopeId}`);
         // --- End of Accurate Scope Lookup Logic ---
 
         // Determine valueType from path.node.right
@@ -94,76 +90,60 @@ console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${J
             t.numericLiteral(line) // Add line number argument
           ]
         );
-        console.log(`[traceVariables] AssignmentExpression: Created newRight (Tracer.varWrite call) for ${name} at line ${line}:`, newRight);
-        // Mark the new node to prevent re-instrumentation if traversal restarts
         newRight[ALREADY] = true;
-        console.log(`[traceVariables] AssignmentExpression: Attempting path.get("right").replaceWith(newRight) for ${name}`);
         path.get("right").replaceWith(newRight);
-        console.log(`[traceVariables] AssignmentExpression: Successfully executed path.get("right").replaceWith(newRight) for ${name}`);
-        // path.skip(); // Maybe skip to prevent re-visiting the new node immediately? Test this.
       },
 
       UpdateExpression(path) {
-        console.log(`[traceVariables Update - Enter]: name=${path.node.argument.name}`);
-        // Ensure the argument is a simple identifier
         if (!t.isIdentifier(path.node.argument)) {
-          console.log(`[traceVariables][UpdateExpression] Skipping non-identifier argument.`);
           return;
         }
         const name = path.node.argument.name;
-        console.log(`[traceVariables] UpdateExpression: Considering argument.name = ${name}`);
-
+        if (isInternalTracerVar(name)) {
+          return;
+        }
         if (SKIP.has(name)) {
-          console.log(`[traceVariables] UpdateExpression: SKIP_NAMES check PASSED for ${name}`);
           return;
-        } else {
-          console.log(`[traceVariables] UpdateExpression: SKIP_NAMES check FAILED for ${name}`);
         }
-
-        // Check if already instrumented by this specific logic (on the UpdateExpression node itself)
         if (path.node[ALREADY]) {
-          console.log(`[traceVariables] UpdateExpression: ALREADY symbol check PASSED for ${name}`);
           return;
-        } else {
-          console.log(`[traceVariables] UpdateExpression: ALREADY symbol check FAILED for ${name}`);
         }
-        // Mark later, only if insertion succeeds
-
-        // --- Scope Lookup Logic (Copied from AssignmentExpression/VariableDeclarator) ---
+        // --- Scope Lookup Logic (closure-aware) ---
         let scopeId = "global"; // Default
-        const binding = path.scope.getBinding(name); // Find where 'name' is declared
 
-        if (binding) {
-            let funcScope = binding.scope;
-            // Traverse up to find the nearest function or program scope
-            while (funcScope && !funcScope.path.isFunction() && !funcScope.path.isProgram()) {
-                funcScope = funcScope.parent;
-            }
-
-            // Check if the found scope's *node* has the _funcScopeId property
-            if (funcScope && funcScope.path && funcScope.path.node && Object.prototype.hasOwnProperty.call(funcScope.path.node, '_funcScopeId')) {
-                scopeId = funcScope.path.node._funcScopeId;
-                console.log(`[traceVariables][${path.type}] Found scopeId '${scopeId}' for '${name}' via binding lookup in funcScope.path.node._funcScopeId.`);
-            } else if (funcScope && funcScope.path.isProgram()) {
-                // If the binding is in the program scope, it's global
-                scopeId = "global";
-                console.log(`[traceVariables][${path.type}] Binding for '${name}' found in Program scope, using 'global'.`);
-            } else {
-                // Fallback if no function scope with _funcScopeId is found above the binding
-                console.warn(`[traceVariables][${path.type}] Binding for '${name}' found, but couldn't find parent function scope with node._funcScopeId. Defaulting to 'global'.`);
-                scopeId = "global";
-            }
+        // Prefer innermost function's _funcScopeId if present (closure-aware)
+        let funcPath = path.getFunctionParent();
+        if (funcPath && funcPath.node && Object.prototype.hasOwnProperty.call(funcPath.node, '_funcScopeId')) {
+            scopeId = funcPath.node._funcScopeId;
         } else {
-            // No binding found, assume global (could be undeclared or built-in)
-            scopeId = "global";
-            console.log(`[traceVariables][${path.type}] No binding found for '${name}' in scope chain, assuming 'global'.`);
+            // Fallback to binding's declaration scope as before
+            const binding = path.scope.getBinding(name); // Find where 'name' is declared
+            if (binding) {
+                let funcScope = binding.scope;
+                // Traverse up to find the nearest function or program scope
+                while (funcScope && !funcScope.path.isFunction() && !funcScope.path.isProgram()) {
+                    funcScope = funcScope.parent;
+                }
+
+                // Check if the found scope's *node* has the _funcScopeId property
+                if (funcScope && funcScope.path && funcScope.path.node && Object.prototype.hasOwnProperty.call(funcScope.path.node, '_funcScopeId')) {
+                    scopeId = funcScope.path.node._funcScopeId;
+                } else if (funcScope && funcScope.path.isProgram()) {
+                    scopeId = "global";
+                } else {
+                    scopeId = "global";
+                }
+            } else {
+                scopeId = "global";
+            }
         }
-        console.log(`[traceVariables Scope Lookup - Update]: varName=${name}, bindingScopeId=${binding?.scope.uid}, finalScopeId=${scopeId}`);
-        console.log(`[traceVariables Update - Scope]: name=${name}, scopeId=${scopeId}`);
         // --- End of Scope Lookup Logic ---
 
         // UpdateExpressions operate on numbers
         const valueType = "number";
+
+        // Get line number
+        const line = path.node.loc ? path.node.loc.start.line : -1;
 
         // Create the Tracer.varWrite call expression to be inserted *after*
         // Pass the identifier itself, which will evaluate to the *updated* value after the expression runs
@@ -173,31 +153,24 @@ console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${J
             t.stringLiteral(scopeId),
             t.stringLiteral(name),
             t.identifier(name), // Pass the variable's identifier node (evaluates to value *after* update)
-            t.stringLiteral(valueType)
+            t.stringLiteral(valueType),
+            t.numericLiteral(line) // Add line number argument
           ]
         );
         // Wrap it in an ExpressionStatement
         const callStatement = t.expressionStatement(callExpr);
         callStatement[ALREADY] = true; // Mark the generated statement
 
-        console.log(`[traceVariables] UpdateExpression: Created VarWrite statement for ${name}`);
-
         // Get the parent statement (e.g., the ExpressionStatement containing the UpdateExpression)
         const statementParent = path.getStatementParent();
         if (statementParent) {
           try {
-             console.log(`[traceVariables] UpdateExpression: Attempting insertAfter for ${name}`);
-             // Insert the trace statement *after* the statement containing the update
-             console.log(`[traceVariables Update - Instrument]: name=${name}, scopeId=${scopeId}`);
              statementParent.insertAfter(callStatement);
-             console.log(`[traceVariables] UpdateExpression: Successfully inserted VarWrite after statement for ${name}`);
              // Mark original UpdateExpression node ONLY after successful insertion
              path.node[ALREADY] = true;
           } catch (e) {
-             console.error(`[traceVariables][UpdateExpression] Error inserting VarWrite for ${name}:`, e);
+             // error
           }
-        } else {
-          console.error(`[traceVariables][UpdateExpression] Could not find statement parent for ${name} to insert VarWrite after.`);
         }
       }, // End UpdateExpression
 
@@ -208,45 +181,24 @@ console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${J
 
         // Only instrument if there's an identifier and an initializer
         if (!t.isIdentifier(idNode) || !initNode) {
-             console.log(`[traceVariables][VariableDeclarator] Skipping declarator without id/init.`);
              return;
         }
-        // Prevent infinite recursion if the init is already a Tracer call (less likely now, but good safety)
-         if (t.isCallExpression(initNode) &&
-             t.isMemberExpression(initNode.callee) &&
-             t.isIdentifier(initNode.callee.object, { name: "Tracer" })) {
-             console.log(`[traceVariables][VariableDeclarator] Skipping initializer already wrapped.`);
+        if (isInternalTracerVar(idNode.name)) {
              return;
-         }
-
+        }
+        if (t.isCallExpression(initNode) &&
+            t.isMemberExpression(initNode.callee) &&
+            t.isIdentifier(initNode.callee.object, { name: "Tracer" })) {
+             return;
+        }
 
         const name = idNode.name;
-        console.log(`[traceVariables] VariableDeclarator: Considering id.name = ${name}`);
-
-        // --- Skip internal trace IDs ---
-        if (name.startsWith('_traceId')) {
-          console.log(`[traceVariables] VariableDeclarator: Skipping internal trace variable ${name}`);
-          return;
-        }
-        // --- End skip internal trace IDs ---
-
         if (SKIP.has(name)) {
-          console.log(`[traceVariables] VariableDeclarator: SKIP_NAMES check PASSED for ${name}`);
           return;
-        } else {
-          console.log(`[traceVariables] VariableDeclarator: SKIP_NAMES check FAILED for ${name}`);
         }
-
-        // Check if already instrumented (e.g., if plugin runs multiple times)
-        // We check the *declarator node* itself now, as we insert after its parent statement
         if (path.node[ALREADY]) {
-          console.log(`[traceVariables] VariableDeclarator: ALREADY symbol check PASSED for ${name}`);
           return;
-        } else {
-          console.log(`[traceVariables] VariableDeclarator: ALREADY symbol check FAILED for ${name}`);
         }
-        // Mark it later, only if insertion succeeds
-
         // --- Accurate Scope Lookup Logic ---
         let scopeId = "global"; // Default
         const binding = path.scope.getBinding(name); // Find where 'name' is declared
@@ -261,57 +213,18 @@ console.log(`[traceVariables Assign Entry]: name=${path.node.left.name}, loc=${J
             if (funcScope && funcScope.path.isFunction()) {
                 if (funcScope.path.node && Object.prototype.hasOwnProperty.call(funcScope.path.node, '_funcScopeId')) {
                     scopeId = funcScope.path.node._funcScopeId;
-                    console.log(`[traceVariables][${path.type}] Found scopeId '${scopeId}' for '${name}' via funcScope.path.node._funcScopeId.`);
                 } else {
-                    // Function scope found but _funcScopeId missing: warn and do NOT default to global
-                    console.warn(`[traceVariables][${path.type}] Function scope found for '${name}' but _funcScopeId missing! This is likely a bug. Marking scopeId as 'unknown-missing-funcScopeId'.`);
                     scopeId = "unknown-missing-funcScopeId";
                 }
             } else if (funcScope && funcScope.path.isProgram()) {
-                // If the binding is in the program scope, it's global
                 scopeId = "global";
-                console.log(`[traceVariables][${path.type}] Binding for '${name}' found in Program scope, using 'global'.`);
             } else {
-                // Fallback if no function or program scope found
-                console.warn(`[traceVariables][${path.type}] Could not find function or program scope for '${name}'. Marking as 'unknown-no-scope'.`);
                 scopeId = "unknown-no-scope";
             }
         } else {
-            // No binding found, assume global (could be undeclared or built-in)
             scopeId = "global";
-            console.log(`[traceVariables][${path.type}] No binding found for '${name}' in scope chain, assuming 'global'.`);
         }
         // --- End of Accurate Scope Lookup Logic ---
-
-        // Log scope lookup details *after* the loop
-// --- DETAILED SCOPE DEBUG LOGGING ---
-console.log(`[traceVariables Scope Debug - Declare]: varName=${name}, Binding found: ${!!binding}`);
-if (binding) {
-    console.log(`[traceVariables Scope Debug - Declare]:   Binding Scope UID: ${binding.scope.uid}`);
-    console.log(`[traceVariables Scope Debug - Declare]:   Binding Scope Type: ${binding.scope.type}`);
-    console.log(`[traceVariables Scope Debug - Declare]:   Binding Scope Path Type: ${binding.scope.path.type}`);
-    const hasFuncScopeId = binding.scope.hasOwnProperty('_funcScopeId');
-    console.log(`[traceVariables Scope Debug - Declare]:   Binding Scope has _funcScopeId: ${hasFuncScopeId}${hasFuncScopeId ? ` (Value: ${binding.scope._funcScopeId})` : ''}`);
-
-    // Re-run traversal logic for logging
-    let logFuncScope = binding.scope;
-    while (logFuncScope && !logFuncScope.path.isFunction() && !logFuncScope.path.isProgram()) {
-        logFuncScope = logFuncScope.parent;
-    }
-
-    if (logFuncScope) {
-        console.log(`[traceVariables Scope Debug - Declare]:   Found Parent Scope UID: ${logFuncScope.uid}`);
-        console.log(`[traceVariables Scope Debug - Declare]:   Found Parent Scope Type: ${logFuncScope.type}`);
-        console.log(`[traceVariables Scope Debug - Declare]:   Found Parent Scope Path Type: ${logFuncScope.path.type}`);
-        // Check the node associated with the scope for _funcScopeId
-        const parentHasScopeId = logFuncScope.path.isFunction() && logFuncScope.path.node && Object.prototype.hasOwnProperty.call(logFuncScope.path.node, '_funcScopeId');
-        console.log(`[traceVariables Scope Debug - Declare]:   Found Parent Scope has node._funcScopeId: ${parentHasScopeId}${parentHasScopeId ? ` (Value: ${logFuncScope.path.node._funcScopeId})` : ''}`);
-    } else {
-        console.log(`[traceVariables Scope Debug - Declare]:   Could not find Function/Program parent scope during traversal.`);
-    }
-}
-// --- END DETAILED SCOPE DEBUG LOGGING ---
-        console.log(`[traceVariables Scope Lookup - Declare]: varName=${name}, bindingScopeId=${binding?.scope.uid}, finalScopeId=${scopeId}`);
 
         // Determine valueType from initNode
         let valueType = "unknown";
@@ -325,6 +238,9 @@ if (binding) {
         else if (t.isIdentifier(initNode) && initNode.name === "undefined") valueType = "undefined";
         else valueType = initNode.type || "unknown";
 
+        // Get line number (from the VariableDeclarator node)
+        const line = path.node.loc ? path.node.loc.start.line : -1;
+
         // Create the Tracer.varWrite call expression
         // IMPORTANT: Pass the *identifier* node as the value argument for insertAfter
         const callExpr = t.callExpression(
@@ -333,29 +249,24 @@ if (binding) {
             t.stringLiteral(scopeId),
             t.stringLiteral(name),
             t.identifier(name), // Pass the variable's identifier node
-            t.stringLiteral(valueType)
+            t.stringLiteral(valueType),
+            t.numericLiteral(line) // Add line number argument
           ]
         );
         // Wrap it in an ExpressionStatement
         const callStatement = t.expressionStatement(callExpr);
         callStatement[ALREADY] = true; // Mark the generated statement to prevent re-instrumentation
 
-        console.log(`[traceVariables] VariableDeclarator: Created VarWrite statement for ${name}`);
-
         // Get the parent statement (likely VariableDeclaration)
         const statementParent = path.getStatementParent();
         if (statementParent) {
           try {
-             console.log(`[traceVariables] VariableDeclarator: Attempting insertAfter for ${name}`);
              statementParent.insertAfter(callStatement);
-             console.log(`[traceVariables] VariableDeclarator: Successfully inserted VarWrite after declaration for ${name}`);
              // Mark original declarator node ONLY after successful insertion
              path.node[ALREADY] = true;
           } catch (e) {
-             console.error(`[traceVariables][VariableDeclarator] Error inserting VarWrite for ${name}:`, e);
+             // error
           }
-        } else {
-          console.error(`[traceVariables][VariableDeclarator] Could not find statement parent for ${name} to insert VarWrite after.`);
         }
       }, // End VariableDeclarator
 

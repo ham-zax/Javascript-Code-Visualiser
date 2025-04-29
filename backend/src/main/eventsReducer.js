@@ -1,91 +1,12 @@
 const _ = require('lodash');
 
-const eventsReducer = (state, evt) => {
-  const { type, payload } = evt;
+// This file previously contained a complex reducer that filtered events.
+// Based on analysis, this filtering was incorrect and removed essential events
+// needed by storyReducer.
+// The primary responsibility now is to handle duplicate ResolvePromise events.
 
-  //
-  // ─── 0) NEW: PASS THROUGH NEW EVENT TYPES ───────────────────────────────────────
-  //
-  // We want to include these in our final `events` array so the front-end
-  // can draw step‐by‐step lines, show locals, var reads/writes, and closures.
-  //
-  if (
-    type === 'Step'    ||
-    type === 'Locals'  ||
-    type === 'VarWrite'||
-    type === 'VarRead' ||
-    type === 'Closure'
-  ) {
-    state.events.push(evt);
-    state.prevEvt = evt;
-    return state;
-  }
-
-  if (type === 'EarlyTermination') state.events.push(evt);
-  if (type === 'UncaughtError') state.events.push(evt);
-
-  if (type === 'ConsoleLog') state.events.push(evt);
-  if (type === 'ConsoleWarn') state.events.push(evt);
-  if (type === 'ConsoleError') state.events.push(evt);
-
-  if (type === 'EnterFunction') {
-    if (state.prevEvt.type === 'BeforePromise') {
-      state.events.push({ type: 'DequeueMicrotask', payload: {} });
-    }
-    if (state.prevEvt.type === 'BeforeMicrotask') {
-      state.events.push({ type: 'DequeueMicrotask', payload: {} });
-    }
-    state.events.push(evt);
-  }
-  if (type == 'ExitFunction') state.events.push(evt);
-  if (type == 'ErrorFunction') state.events.push(evt);
-
-  if (type === 'InitPromise') state.events.push(evt);
-  if (type === 'ResolvePromise') {
-    state.events.push(evt);
-
-    const microtaskInfo = state.parentsIdsOfPromisesWithInvokedCallbacks
-      .find(({ id }) => id === payload.id);
-
-    if (microtaskInfo) {
-      state.events.push({
-        type: 'EnqueueMicrotask',
-        payload: { name: microtaskInfo.name }
-      });
-    }
-  }
-  if (type === 'BeforePromise') state.events.push(evt);
-  if (type === 'AfterPromise') state.events.push(evt);
-
-  if (type === 'InitMicrotask') {
-    state.events.push(evt);
-
-    const microtaskInfo = state.parentsIdsOfMicrotasks
-      .find(({ id }) => id === payload.id);
-
-    if (microtaskInfo) {
-      state.events.push({
-        type: 'EnqueueMicrotask',
-        payload: { name: microtaskInfo.name }
-      });
-    }
-  }
-  if (type === 'BeforeMicrotask') state.events.push(evt);
-  if (type === 'AfterMicrotask') state.events.push(evt);
-
-  if (type === 'InitTimeout') state.events.push(evt);
-  if (type === 'BeforeTimeout') {
-    state.events.push({ type: 'Rerender', payload: {} });
-    state.events.push(evt);
-  }
-
-  state.prevEvt = evt;
-
-  return state;
-};
-
-// TODO: Return line:column numbers for func calls
-
+// TODO: Consider removing the promise/microtask logic below if it's not strictly needed
+//       or if storyReducer can handle the raw events directly.
 const reduceEvents = (events) => {
   // For some reason, certain Promises (e.g. from `fetch` calls) seem to
   // resolve multiple times. I don't know why this happens, but it screws things
@@ -100,104 +21,14 @@ const reduceEvents = (events) => {
   .reverse()
   .value()
 
-  // Before we reduce the events, we need to figure out when Microtasks
-  // were enqueued.
-  //
-  // A Microtask was enqueued when its parent resolved iff the child Promise
-  // of the parent had its callback invoked.
-  //
-  // A Promise has its callback invoked iff a function was entered immediately
-  // after the Promise's `BeforePromise` event.
-
-  const resolvedPromiseIds = events
-    .filter(({ type }) => type === 'ResolvePromise')
-    .map(({ payload: { id } }) => id);
-
-  const promisesWithInvokedCallbacksInfo = events
-    .filter(({ type }) =>
-      ['BeforePromise', 'EnterFunction', 'ExitFunction', 'ResolvePromise'].includes(type)
-    )
-    .map((evt, idx, arr) =>
-      evt.type === 'BeforePromise' && (arr[idx + 1] || {}).type === 'EnterFunction'
-        ? [evt, arr[idx + 1]] : undefined
-    )
-    .filter(Boolean)
-    .map(([beforePromiseEvt, enterFunctionEvt]) => ({
-      id: beforePromiseEvt.payload.id,
-      name: enterFunctionEvt.payload.name
-    }))
-
-  const promiseChildIdToParentId = {};
-  events
-    .filter(({ type }) => type === 'InitPromise')
-    .forEach(({ payload: { id, parentId } }) => {
-      promiseChildIdToParentId[id] = parentId;
-    });
-
-  const parentsIdsOfPromisesWithInvokedCallbacks = promisesWithInvokedCallbacksInfo
-    .map(({ id: childId, name }) => ({
-      id: promiseChildIdToParentId[childId],
-      name,
-    }));
-
-  const microtasksWithInvokedCallbacksInfo = events
-    .filter(({ type }) =>
-      [ 'InitMicrotask', 'BeforeMicrotask', 'AfterMicrotask', 'EnterFunction', 'ExitFunction' ].includes(type)
-    )
-    .map((evt, idx, arr) =>
-      evt.type === 'BeforeMicrotask' && (arr[idx + 1] || {}).type === 'EnterFunction'
-        ? [evt, arr[idx + 1]] : undefined
-    )
-    .filter(Boolean)
-    .map(([beforeMicrotaskEvt, enterFunctionEvt]) => ({
-      id: beforeMicrotaskEvt.payload.id,
-      name: enterFunctionEvt.payload.name
-    }));
-
-  const microtaskChildIdToParentId = {};
-  events
-    .filter(({ type }) => type === 'InitMicrotask')
-    .forEach(({ payload: { id, parentId } }) => {
-      microtaskChildIdToParentId[id] = parentId;
-    });
-
-  const parentsIdsOfMicrotasks = microtasksWithInvokedCallbacksInfo
-    .map(({ id: childId, name }) => ({
-      id: microtaskChildIdToParentId[childId],
-      name,
-    }));
-
-  console.log({ resolvedPromiseIds, promisesWithInvokedCallbacksInfo, parentsIdsOfPromisesWithInvokedCallbacks, parentsIdsOfMicrotasks });
-
-  const raw = events.reduce(eventsReducer, {
-    events: [],
-    parentsIdsOfPromisesWithInvokedCallbacks,
-    parentsIdsOfMicrotasks,
-    prevEvt: {},
-  }).events;
-
-  // === NEW: drop all InitPromise/BeforePromise/... noise ===
-  const WHITELIST = new Set([
-    'Step',
-    'EnterFunction',
-    'ExitFunction',
-    'Locals',
-    'VarWrite',
-    'ConsoleLog',
-    'ConsoleWarn',
-    'ConsoleError',
-    'Closure',
-    'ErrorFunction',
-    'UncaughtError',
-    'EarlyTermination'
-  ]);
-
-  console.log('[reduceEvents] raw before filter:', raw);
-console.log('[reduceEvents] Event types before filter:', raw.map(e => e.type));
-  const filteredRaw = raw.filter(evt => WHITELIST.has(evt.type));
-console.log('[reduceEvents] Event types after filter:', filteredRaw.map(e => e.type));
-  console.log('[reduceEvents] raw after filter:', filteredRaw);
-  return filteredRaw;
+  // Removed promise/microtask calculation logic (lines 24-92) to ensure
+  // this function only de-duplicates ResolvePromise and passes all other
+  // raw events directly to storyReducer.
+  // The original 'events' array (after de-duping ResolvePromise) is now passed through.
+  // The storyReducer is now responsible for processing all raw event types.
+  console.log('[reduceEvents] Returning de-duplicated events. Count:', events.length);
+  console.log('[reduceEvents] Event types being passed:', events.map(e => e.type));
+  return events;
 };
 
 module.exports = { reduceEvents };

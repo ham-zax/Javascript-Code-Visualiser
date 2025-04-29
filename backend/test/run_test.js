@@ -73,7 +73,7 @@ try {
         const event = { type, payload };
         eventsLog.push(event); // Store the event
         // Log specific events relevant to the verification steps
-        if (['EnterFunction', 'ExitFunction', 'VarWrite', 'Closure', 'Locals', 'Step', 'ErrorFunction'].includes(type)) {
+        if (['BeforeCall', 'EnterFunction', 'ExitFunction', 'VarWrite', 'Closure', 'Locals', 'Step', 'ErrorFunction'].includes(type)) {
            console.log(`[Tracer Event] ${type}:`, JSON.stringify(payload, (key, value) =>
              typeof value === 'function' ? '[Function]' : value // Avoid logging full functions
            , 2));
@@ -110,7 +110,7 @@ try {
           Tracer.logEvent('Closure', { closureId, parentId, bindings: displayBindings });
       },
       iterateLoop: () => { /* No-op for this test */ }, // Add dummy iterateLoop
-    beforeCall: () => { /* No-op for test runner */ },
+    beforeCall: (callId, callSiteLine) => Tracer.logEvent('BeforeCall', { callId, callSiteLine }),
     };
   
     const sandbox = {

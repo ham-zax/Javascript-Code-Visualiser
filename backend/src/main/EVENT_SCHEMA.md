@@ -42,7 +42,9 @@ Emitted when the interpreter moves to a new source location.
     "scopes": [ /* Array of Scope objects representing all active/visible scopes at this line */ ],
     "statementType": "assignment", // (optional) e.g. 'assignment', 'call', 'return', etc.
     "heap": {
-      // New: Maps heapId to serialized heap object/array structure at this step
+      // Maps heapId to the current serialized heap object/array structure at this step.
+      // This snapshot reflects all heap objects/arrays visible at this line.
+      // Example:
       "h1": { "type": "object", "heapId": "h1", "properties": { ... } },
       "h2": { "type": "array", "heapId": "h2", "elements": [ ... ] }
     }

@@ -163,7 +163,14 @@ try {
     })
     .code;
   console.log("Babel transformation complete."); // Add log
-  // Optional: Log transformed code for debugging
+
+  // --- DEBUG: Log the final instrumented code to CONSOLE ---
+  console.log("--- START Instrumented Code (Console) ---");
+  console.log(modifiedSource);
+  console.log("--- END Instrumented Code (Console) ---");
+  // --- END DEBUG ---
+
+  // Optional: Log transformed code for debugging to file
   log('--- Transformed Code ---');
   log(modifiedSource); // <--- UNCOMMENTED THIS
   log('--- End Transformed Code ---');
@@ -313,8 +320,8 @@ const Tracer = {
   },
 
   // Enhanced variable tracking
-  varWrite: (scopeId, name, val, valueType) => {
-    console.log(`[Tracer.varWrite] Called with: scopeId=${scopeId}, name=${name}, val=`, val, `, valueType=${valueType}`);
+  varWrite: (scopeId, name, val, valueType, line) => { // Added 'line' parameter
+    console.log(`[Tracer.varWrite] Called with: scopeId=${scopeId}, name=${name}, val=`, val, `, valueType=${valueType}, line=${line}`); // Log line
 
     // Detect heap objects/arrays (not null, not function)
     if (
@@ -348,7 +355,8 @@ const Tracer = {
           scopeId,
           name,
           val: { type: 'reference', heapId, valueType },
-          valueType
+          valueType,
+          line // Include line in payload
         }
       });
       return val;
@@ -361,7 +369,8 @@ const Tracer = {
         scopeId,
         name,
         val: prettyFormat(val),
-        valueType
+        valueType,
+        line // Include line in payload
       }
     });
     return val;
@@ -422,7 +431,8 @@ const vm = new VM({
   timeout: 6000, // Keep existing timeout
   sandbox: {
     nextId,
-    Tracer, // Expose full Tracer object with all methods
+    ...Tracer, // Spread individual methods for direct access
+    Tracer, // Also expose full Tracer object
     fetch,
     _,
     lodash: _,

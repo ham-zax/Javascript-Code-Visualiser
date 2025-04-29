@@ -12,34 +12,82 @@ module.exports = function traceFunctions({ types: t }) {
   // Add a flag to see if the visitor ran at all
   let visitorRan = false;
 
+  // Helper function to instrument CallExpressions
+  function instrumentCallExpression(path) {
+      // Add logging to see if this visitor runs
+      console.log(`[traceFunctions] instrumentCallExpression called for node at L${path.node.loc?.start.line}`);
+
+      // Only instrument direct function calls, not super, import, etc.
+      if (!path.node.loc) {
+         console.log(`[traceFunctions] instrumentCallExpression skipped: No location info.`);
+         return;
+      }
+      // Avoid instrumenting calls to our own Tracer methods
+      if (path.get("callee").isMemberExpression() && path.get("callee.object").isIdentifier({ name: "Tracer" })) {
+          console.log(`[traceFunctions] instrumentCallExpression skipped: Tracer call.`);
+          return;
+      }
+      // Avoid instrumenting calls to nextId
+      if (path.get("callee").isIdentifier({ name: "nextId" })) {
+           console.log(`[traceFunctions] instrumentCallExpression skipped: nextId call.`);
+           return;
+      }
+      // Avoid instrumenting the call we are about to insert
+      if (path.get("callee").isMemberExpression() && path.get("callee.property").isIdentifier({ name: "beforeCall" })) {
+           console.log(`[traceFunctions] instrumentCallExpression skipped: Already instrumented (beforeCall).`);
+           return;
+      }
+
+
+      const t = path.hub.file.opts.parserOpts.plugins.includes("typescript") ? path.hub.file.constructor.types : require("@babel/types");
+      const callId = path.scope.generateUidIdentifier("callId");
+      const callSiteLine = t.numericLiteral(path.node.loc.start.line);
+      console.log(`[traceFunctions] instrumentCallExpression: Preparing to instrument call at line ${callSiteLine.value}`);
+
+      // Insert: const _callId = nextId();
+      const callIdDecl = t.variableDeclaration("const", [
+        t.variableDeclarator(callId, t.callExpression(t.identifier("nextId"), []))
+      ]);
+      // Insert: Tracer.beforeCall(_callId, callSiteLine);
+      const beforeCallStmt = t.expressionStatement(
+        t.callExpression(
+          t.memberExpression(t.identifier("Tracer"), t.identifier("beforeCall")),
+          [callId, callSiteLine]
+        )
+      );
+      // Insert both before the call expression's statement
+      const stmt = path.getStatementParent();
+      if (stmt && !stmt.getData('beforeCallInstrumented')) { // Avoid double instrumentation if traversal runs twice
+        console.log(`[traceFunctions] instrumentCallExpression: Found statement parent. Inserting BeforeCall instrumentation.`);
+        stmt.insertBefore([callIdDecl, beforeCallStmt]);
+        stmt.setData('beforeCallInstrumented', true); // Mark the statement parent
+      } else if (!stmt) {
+         console.warn(`[traceFunctions] instrumentCallExpression: Could not find statement parent for call at L${path.node.loc?.start.line}. BeforeCall instrumentation skipped.`);
+      } else {
+         console.log(`[traceFunctions] instrumentCallExpression: Statement parent already instrumented. Skipping insertion.`);
+      }
+  }
+
   return {
     visitor: {
-      CallExpression(path) {
-        // Only instrument direct function calls, not super, import, etc.
-        if (!path.node.loc) return;
-        const t = path.hub.file.opts.parserOpts.plugins.includes("typescript") ? path.hub.file.constructor.types : require("@babel/types");
-        const callId = path.scope.generateUidIdentifier("callId");
-        const callSiteLine = t.numericLiteral(path.node.loc.start.line);
+      // Keep CallExpression visitor for calls OUTSIDE instrumented functions (e.g., global scope)
+      CallExpression: instrumentCallExpression,
 
-        // Insert: const _callId = nextId();
-        const callIdDecl = t.variableDeclaration("const", [
-          t.variableDeclarator(callId, t.callExpression(t.identifier("nextId"), []))
-        ]);
-        // Insert: Tracer.beforeCall(_callId, callSiteLine);
-        const beforeCallStmt = t.expressionStatement(
-          t.callExpression(
-            t.memberExpression(t.identifier("Tracer"), t.identifier("beforeCall")),
-            [callId, callSiteLine]
-          )
-        );
-        // Insert both before the call expression's statement
-        if (path.parentPath.isExpressionStatement()) {
-          path.parentPath.insertBefore([callIdDecl, beforeCallStmt]);
-        }
-      },
       Function(path) {
         visitorRan = true; // Mark that the visitor was entered
         console.log(`[traceFunctions] Entered Function visitor for node type: ${path.node.type}, Name: ${path.node.id?.name || '(anon)'}`); // Log entry
+
+        // --- Ensure every function node gets a unique _funcScopeId ---
+        if (!Object.prototype.hasOwnProperty.call(path.node, '_funcScopeId')) {
+          // Use generateUniqueId from traceScope.js if available, else fallback
+          if (typeof generateUniqueId === 'function') {
+            path.node._funcScopeId = `funcScopeId-${generateUniqueId()}`;
+          } else {
+            // Fallback: use a random string if generateUniqueId is not available
+            path.node._funcScopeId = `funcScopeId-${Math.random().toString(36).slice(2, 10)}`;
+          }
+        }
+        // --- End _funcScopeId assignment ---
 
         if (!isTraceableFunction(path)) {
           console.log(`[traceFunctions] Skipping non-traceable function type: ${path.node.type}`);
@@ -113,7 +161,9 @@ module.exports = function traceFunctions({ types: t }) {
 
         // Placeholders for thisBinding and callSiteLine (can be null for now)
         const thisBinding = t.nullLiteral();
-        const callSiteLine = t.nullLiteral();
+        // Do not emit callSiteLine as null; let reducer use stack from BeforeCall
+        // const callSiteLine = t.nullLiteral();
+        // Remove callSiteLine from enterFunc if not available
 
         // 4. Create Tracer calls as AST nodes (Copied from user feedback & FIXED placeholders)
         const enterCall = t.expressionStatement(
@@ -126,7 +176,7 @@ module.exports = function traceFunctions({ types: t }) {
               end,
               funcScopeId, // Use the retrieved _funcScopeId
               thisBinding,
-              callSiteLine
+              t.nullLiteral() // Always pass callSiteLine as null from Function visitor
             ]
           )
         );
@@ -145,6 +195,7 @@ module.exports = function traceFunctions({ types: t }) {
         const throwStmt = t.throwStatement(errorParam);
 
 
+        // --- ENABLED Function Body Instrumentation ---
         // 5. Create the try/catch/finally structure (Copied from user feedback)
         const currentBodyBlock = functionBodyPath.node;
         const catchClause = t.catchClause(errorParam, t.blockStatement([errorCall, throwStmt]));
@@ -177,8 +228,8 @@ module.exports = function traceFunctions({ types: t }) {
             t.inherits(newBody, functionBodyPath.node); // Use Babel's inheritance helper
             // --- End loc copy attempt ---
 
-            functionBodyPath.replaceWith(newBody); // newBody is the BlockStatement with try/catch etc.
-            console.log(`[traceFunctions] Body replaced successfully for: ${fnName}`);
+            functionBodyPath.replaceWith(newBody); // <<< ENABLED BODY REPLACEMENT
+            console.log(`[traceFunctions] Body replacement completed for: ${fnName}`);
 
             console.log(`[traceFunctions] Crawling scope for: ${fnName}`);
             path.scope.crawl();
@@ -189,8 +240,21 @@ module.exports = function traceFunctions({ types: t }) {
             // Log details about the path/node if possible
             console.error(`[traceFunctions] Error occurred on node type: ${path.node.type}, name: ${fnName}`);
         }
+        // --- END ENABLED ---
+
+        // Keep the explicit traversal for CallExpressions even without body replacement
+        console.log(`[traceFunctions] Traversing for CallExpressions within: ${fnName}`);
+        path.traverse({
+            CallExpression: instrumentCallExpression // Use the helper function
+        });
+        // --- End CallExpression traversal ---
+
+        // Mark the original function node as traced (even though body wasn't replaced)
+        path.node[FUNCTION_TRACED] = true;
+
       },
 
+      // --- ENABLED ReturnStatement Instrumentation ---
       ReturnStatement(path, state) {
         // Ensure this return is directly within a function we've instrumented, not a nested one.
         const funcPath = path.getFunctionParent();
@@ -234,43 +298,23 @@ module.exports = function traceFunctions({ types: t }) {
         const start = funcPath.node.loc ? t.numericLiteral(funcPath.node.loc.start.line) : t.nullLiteral();
         const end = funcPath.node.loc ? t.numericLiteral(funcPath.node.loc.end.line) : t.nullLiteral();
 
-        // --- Accurate Scope ID Lookup ---
-        // Get the scope ID directly from the function node property set by traceScope.js
+        // --- Accurate Scope ID Lookup (closure-aware) ---
+        // Always use the innermost function's _funcScopeId if present
         let scopeId = "global"; // Default
 
         if (funcPath && funcPath.node) {
             if (Object.prototype.hasOwnProperty.call(funcPath.node, '_funcScopeId')) {
                 scopeId = funcPath.node._funcScopeId;
-                console.log(`[traceFunctions ReturnStatement] Found scopeId '${scopeId}' on funcPath.node._funcScopeId`);
+                console.log(`[traceFunctions ReturnStatement] Using innermost function scopeId '${scopeId}' for return in ${fnName} (closure-aware).`);
             } else {
-                // Traverse up the scope chain to find a parent function node with _funcScopeId
-                let parentScope = funcPath && funcPath.scope ? funcPath.scope.parent : null;
-                let foundParent = false;
-                while (parentScope) {
-                    if (
-                        parentScope.block &&
-                        (parentScope.block.type === "FunctionDeclaration" ||
-                         parentScope.block.type === "FunctionExpression" ||
-                         parentScope.block.type === "ArrowFunctionExpression") &&
-                        parentScope.block._funcScopeId
-                    ) {
-                        scopeId = parentScope.block._funcScopeId;
-                        foundParent = true;
-                        console.log(`[traceFunctions ReturnStatement] Found scopeId '${scopeId}' on parentScope.block._funcScopeId`);
-                        break;
-                    }
-                    parentScope = parentScope.parent;
-                }
-                if (!foundParent) {
-                    // Function scope found but _funcScopeId missing: warn and do NOT default to global
-                    if (funcPath.isFunction()) {
-                        console.warn(`[traceFunctions ReturnStatement] Function scope found for '${fnName}' but _funcScopeId missing! This is likely a bug. Marking scopeId as 'unknown-missing-funcScopeId'.`);
-                        scopeId = "unknown-missing-funcScopeId";
-                    } else {
-                        // Not in a function, use global
-                        scopeId = "global";
-                        console.warn(`[traceFunctions ReturnStatement] Not in a function scope for ${fnName}, using 'global'.`);
-                    }
+                // Function scope found but _funcScopeId missing: warn and do NOT default to global
+                if (funcPath.isFunction()) {
+                    console.warn(`[traceFunctions ReturnStatement] Function scope found for '${fnName}' but _funcScopeId missing! This is likely a bug. Marking scopeId as 'unknown-missing-funcScopeId'.`);
+                    scopeId = "unknown-missing-funcScopeId";
+                } else {
+                    // Not in a function, use global
+                    scopeId = "global";
+                    console.warn(`[traceFunctions ReturnStatement] Not in a function scope for ${fnName}, using 'global'.`);
                 }
             }
         } else {
@@ -392,6 +436,7 @@ module.exports = function traceFunctions({ types: t }) {
             console.error(`[traceFunctions] Error occurred on ReturnStatement at line: ${path.node?.loc?.start.line || 'unknown'}`);
         }
       },
+      // --- END ENABLED ---
 
       // Add Program.exit to see if the visitor ran at all during the file processing
       Program: {
