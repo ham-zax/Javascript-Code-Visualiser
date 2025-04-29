@@ -1,6 +1,12 @@
 // Utility for state derivation functions related to execution visualization
 
-import { TraceEvent } from "../store/playbackStore";
+import {
+  TraceEvent,
+  StepLinePayload,
+  CallPayload,
+  ReturnPayload,
+  AssignPayload,
+} from "../store/playbackStore";
 
 /**
  * Derives the next and previous highlighted lines for dual highlighting.
@@ -19,19 +25,15 @@ export function deriveHighlightedLine(
     currentEventIndex < events.length &&
     events[currentEventIndex].type === "STEP_LINE"
   ) {
-    const payload = events[currentEventIndex].payload as { line?: number };
-    if (typeof payload.line === "number") {
-      nextLine = payload.line;
-    }
+    const payload = events[currentEventIndex].payload as StepLinePayload;
+    nextLine = payload.line;
   } else if (currentEventIndex >= 0 && currentEventIndex < events.length) {
     // Not a STEP_LINE, try to look ahead for the next STEP_LINE
     for (let i = currentEventIndex + 1; i < events.length; i++) {
       if (events[i].type === "STEP_LINE") {
-        const payload = events[i].payload as { line?: number };
-        if (typeof payload.line === "number") {
-          nextLine = payload.line;
-          break;
-        }
+        const payload = events[i].payload as StepLinePayload;
+        nextLine = payload.line;
+        break;
       }
     }
   }
@@ -40,39 +42,33 @@ export function deriveHighlightedLine(
   if (currentEventIndex > 0) {
     const prevEvent = events[currentEventIndex - 1];
     if (prevEvent.type === "STEP_LINE") {
-      const payload = prevEvent.payload as { line?: number };
-      if (typeof payload.line === "number") {
-        prevLine = payload.line;
-      }
+      const payload = prevEvent.payload as StepLinePayload;
+      prevLine = payload.line;
     } else if (prevEvent.type === "CALL") {
-      const payload = prevEvent.payload as { callSiteLine?: number };
+      const payload = prevEvent.payload as CallPayload;
       if (typeof payload.callSiteLine === "number") {
         prevLine = payload.callSiteLine;
       } else {
         // fallback: last STEP_LINE before CALL
         for (let i = currentEventIndex - 2; i >= 0; i--) {
           if (events[i].type === "STEP_LINE") {
-            const p = events[i].payload as { line?: number };
-            if (typeof p.line === "number") {
-              prevLine = p.line;
-              break;
-            }
+            const p = events[i].payload as StepLinePayload;
+            prevLine = p.line;
+            break;
           }
         }
       }
     } else if (prevEvent.type === "RETURN") {
-      const payload = prevEvent.payload as { returnLine?: number };
+      const payload = prevEvent.payload as ReturnPayload;
       if (typeof payload.returnLine === "number") {
         prevLine = payload.returnLine;
       } else {
         // fallback: last STEP_LINE within the returned function
         for (let i = currentEventIndex - 2; i >= 0; i--) {
           if (events[i].type === "STEP_LINE") {
-            const p = events[i].payload as { line?: number };
-            if (typeof p.line === "number") {
-              prevLine = p.line;
-              break;
-            }
+            const p = events[i].payload as StepLinePayload;
+            prevLine = p.line;
+            break;
           }
         }
       }
@@ -80,11 +76,9 @@ export function deriveHighlightedLine(
       // fallback: last STEP_LINE before currentEventIndex
       for (let i = currentEventIndex - 1; i >= 0; i--) {
         if (events[i].type === "STEP_LINE") {
-          const p = events[i].payload as { line?: number };
-          if (typeof p.line === "number") {
-            prevLine = p.line;
-            break;
-          }
+          const p = events[i].payload as StepLinePayload;
+          prevLine = p.line;
+          break;
         }
       }
     }
@@ -112,9 +106,9 @@ export function deriveScopeState(
     if (
       event.type === "STEP_LINE" &&
       event.payload &&
-      Array.isArray((event.payload as any).scopes)
+      Array.isArray((event.payload as StepLinePayload).scopes)
     ) {
-      originalSnapshot = (event.payload as any).scopes;
+      originalSnapshot = (event.payload as StepLinePayload).scopes;
       lastStepLineIdx = i;
       break;
     }
@@ -141,7 +135,8 @@ export function deriveScopeState(
       "scopeId" in currentEvent.payload &&
       "varName" in currentEvent.payload
     ) {
-      changedVarKey = `${currentEvent.payload.scopeId}|${currentEvent.payload.varName}`;
+      const assignPayload = currentEvent.payload as AssignPayload;
+      changedVarKey = `${assignPayload.scopeId}|${assignPayload.varName}`;
     }
   }
 
@@ -209,18 +204,15 @@ export function deriveCallStackState(
   for (let i = 0; i <= currentEventIndex && i < events.length; i++) {
     const event = events[i];
     if (event.type === "CALL") {
-      const payload = event.payload as any;
-      const scopeId = payload.newScopeId || payload.scopeId || "";
+      const payload = event.payload as CallPayload;
+      const scopeId = payload.newScopeId || "";
       const functionName = scopeIdToNameMap.get(scopeId) || "anonymous"; // Use mapped name
-
+      
       // Ensure the pushed object matches the updated CallStackFrame type
       stack.push({
         functionName: functionName, // Correct property name
         type: payload.closureScopeId ? "closure" : "normal",
-        line:
-          "line" in payload && typeof payload.line === "number"
-            ? payload.line
-            : payload.callSiteLine ?? undefined,
+        line: payload.callSiteLine ?? undefined,
         scopeId: scopeId,
       });
     } else if (event.type === "RETURN") {
