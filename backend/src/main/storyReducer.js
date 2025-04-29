@@ -114,59 +114,66 @@ function storyReducer(initialState, rawEvents) {
 
     const snapshot = [];
     for (const lexicalScopeId of visibleLexicalScopeIds) {
-      const originalScope = activeScopes[lexicalScopeId];
-      if (!originalScope) {
-        console.warn(`[storyReducer] Snapshot: Lexical Scope ID ${lexicalScopeId} not found in activeScopes during final mapping!`);
-        continue;
+      const processedScope = _processScopeForSnapshot(lexicalScopeId, activeScopes, findDefiningScope);
+      if (processedScope) {
+        snapshot.push(processedScope);
       }
-
-      const scopeClone = deepClone(originalScope);
-      if (!scopeClone) {
-           console.error(`[storyReducer] Snapshot: Failed to clone scope ${lexicalScopeId}. Skipping.`);
-           continue;
-      }
-
-      if (scopeClone.variables) {
-        const filteredVariables = {};
-        for (const varName in scopeClone.variables) {
-          if (isInternalTracerVar(varName)) continue;
-          const originalVarData = scopeClone.variables[varName];
-          const definingScopeId = findDefiningScope(varName, lexicalScopeId);
-
-          let bindingType = 'local';
-          if (definingScopeId === 'global') {
-            bindingType = 'global';
-          } else if (definingScopeId && definingScopeId !== lexicalScopeId) {
-            const definingScope = activeScopes[definingScopeId];
-            if (definingScope?.isPersistent) {
-              bindingType = 'closure';
-            } else {
-               bindingType = 'ancestor-non-persistent';
-               console.log(`[storyReducer] Variable '${varName}' in scope '${lexicalScopeId}' defined in non-persistent ancestor '${definingScopeId}'. Type: ${bindingType}`);
-            }
-          } else if (!definingScopeId) {
-              bindingType = 'unknown';
-              console.warn(`[storyReducer] Could not find defining scope for variable '${varName}' starting from scope '${lexicalScopeId}'.`);
-          }
-           filteredVariables[varName] = { ...originalVarData, bindingType };
-        }
-         scopeClone.variables = filteredVariables;
-      }
-        if (scopeClone.variables && typeof scopeClone.variables === 'object' && !Array.isArray(scopeClone.variables)) {
-            scopeClone.variables = Object.entries(scopeClone.variables).map(([varName, data]) => ({
-                varName,
-                ...data
-            }));
-        } else if (!scopeClone.variables) {
-            scopeClone.variables = [];
-        }
-
-      snapshot.push(scopeClone);
     }
 
     console.log(`[storyReducer] Built snapshot with ${snapshot.length} scopes (Lexical IDs: ${Array.from(visibleLexicalScopeIds).join(', ')})`);
     return snapshot;
   }
+// Helper: Process a single scope for the snapshot
+function _processScopeForSnapshot(lexicalScopeId, activeScopes, findDefiningScope) {
+  const originalScope = activeScopes[lexicalScopeId];
+  if (!originalScope) {
+    console.warn(`[storyReducer] Snapshot: Lexical Scope ID ${lexicalScopeId} not found in activeScopes during final mapping!`);
+    return null;
+  }
+
+  const scopeClone = deepClone(originalScope);
+  if (!scopeClone) {
+    console.error(`[storyReducer] Snapshot: Failed to clone scope ${lexicalScopeId}. Skipping.`);
+    return null;
+  }
+
+  if (scopeClone.variables) {
+    const filteredVariables = {};
+    for (const varName in scopeClone.variables) {
+      if (isInternalTracerVar(varName)) continue;
+      const originalVarData = scopeClone.variables[varName];
+      const definingScopeId = findDefiningScope(varName, lexicalScopeId);
+
+      let bindingType = 'local';
+      if (definingScopeId === 'global') {
+        bindingType = 'global';
+      } else if (definingScopeId && definingScopeId !== lexicalScopeId) {
+        const definingScope = activeScopes[definingScopeId];
+        if (definingScope?.isPersistent) {
+          bindingType = 'closure';
+        } else {
+          bindingType = 'ancestor-non-persistent';
+          console.log(`[storyReducer] Variable '${varName}' in scope '${lexicalScopeId}' defined in non-persistent ancestor '${definingScopeId}'. Type: ${bindingType}`);
+        }
+      } else if (!definingScopeId) {
+        bindingType = 'unknown';
+        console.warn(`[storyReducer] Could not find defining scope for variable '${varName}' starting from scope '${lexicalScopeId}'.`);
+      }
+      filteredVariables[varName] = { ...originalVarData, bindingType };
+    }
+    scopeClone.variables = filteredVariables;
+  }
+  if (scopeClone.variables && typeof scopeClone.variables === 'object' && !Array.isArray(scopeClone.variables)) {
+    scopeClone.variables = Object.entries(scopeClone.variables).map(([varName, data]) => ({
+      varName,
+      ...data
+    }));
+  } else if (!scopeClone.variables) {
+    scopeClone.variables = [];
+  }
+
+  return scopeClone;
+}
 
   // --- Initialize Global Scope ---
   activeScopes['global'] = {

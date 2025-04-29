@@ -74,28 +74,32 @@ function serializeForHeap(target, heapId, depth = 0, maxDepth = 3, visited = new
 
     // Handle Objects
     if (targetType === 'object') {
-        if (depth >= maxDepth) return { type: 'object', heapId, representation: 'Object' };
-        const serializedObj = {
-            type: 'object',
-            heapId: heapId,
-            properties: {}
-        };
-        for (const k of Object.keys(target)) {
-            try {
-                const v = target[k];
-                let valueHeapId = objectToHeapId.get(v);
-                if ((typeof v === 'object' || typeof v === 'function') && v !== null && !valueHeapId) {
-                    valueHeapId = getNextHeapId();
-                    objectToHeapId.set(v, valueHeapId);
-                }
-                serializedObj.properties[k] = serializeForHeap(v, valueHeapId || null, depth + 1, maxDepth, visited);
-            } catch (e) {
-                serializedObj.properties[k] = '[Unserializable]';
-            }
-        }
-        heapRegistry[heapId] = serializedObj;
-        return serializedObj;
+        return _serializeObjectForHeap(target, heapId, depth, maxDepth, visited);
     }
+// Helper: Extracted object serialization logic for heap
+function _serializeObjectForHeap(target, heapId, depth, maxDepth, visited) {
+    if (depth >= maxDepth) return { type: 'object', heapId, representation: 'Object' };
+    const serializedObj = {
+        type: 'object',
+        heapId: heapId,
+        properties: {}
+    };
+    for (const k of Object.keys(target)) {
+        try {
+            const v = target[k];
+            let valueHeapId = objectToHeapId.get(v);
+            if ((typeof v === 'object' || typeof v === 'function') && v !== null && !valueHeapId) {
+                valueHeapId = getNextHeapId();
+                objectToHeapId.set(v, valueHeapId);
+            }
+            serializedObj.properties[k] = serializeForHeap(v, valueHeapId || null, depth + 1, maxDepth, visited);
+        } catch (e) {
+            serializedObj.properties[k] = '[Unserializable]';
+        }
+    }
+    heapRegistry[heapId] = serializedObj;
+    return serializedObj;
+}
 
     // Fallback for unexpected types
     return `[Unsupported Type: ${targetType}]`;

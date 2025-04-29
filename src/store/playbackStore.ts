@@ -71,7 +71,7 @@ interface PlaybackState {
   isPlaying: boolean;
   speed: number;
   setEvents: (events: TraceEvent[]) => void;
-  setIdx: (idx: number) => void; // Keep internal setter name for now, or rename if preferred
+  setCurrentEventIndex: (idx: number) => void; // Renamed from setIdx for consistency
   togglePlay: () => void;
   setSpeed: (speed: number) => void;
   replayTo: (targetIdx: number) => void;
@@ -88,7 +88,7 @@ const playbackStateCreator: PlaybackStateCreator = (set, get) => ({
   isPlaying: false,
   speed: 1,
   setEvents: (events: TraceEvent[]) => set({ events, currentEventIndex: 0 }), // Renamed from idx
-  setIdx: (idx: number) => set({ currentEventIndex: idx }), // Renamed from idx
+  setCurrentEventIndex: (idx: number) => set({ currentEventIndex: idx }), // Renamed from idx
   togglePlay: () => set({ isPlaying: !get().isPlaying }),
   setSpeed: (speed: number) => set({ speed }),
   replayTo: (targetIdx: number) => {

@@ -45,7 +45,7 @@ counter(); // Second call, count becomes 2
 
 function App() {
   // Destructure all needed values from the store *once*
-  const { events, currentEventIndex, setEvents, replayTo, setIdx, isPlaying, speed } = usePlaybackStore(); // Renamed from idx
+  const { events, currentEventIndex, setEvents, replayTo, setCurrentEventIndex, isPlaying, speed } = usePlaybackStore(); // Renamed from idx
   const [currentCode, setCurrentCode] = useState(DEFAULT_CODE);
   const [isRunning, setIsRunning] = useState(false);
 
@@ -173,11 +173,11 @@ function App() {
     let timer: NodeJS.Timeout | undefined;
     if (isPlaying && currentEventIndex < totalSteps) { // Renamed from idx
       timer = setTimeout(() => {
-        setIdx(currentEventIndex + 1); // Use setter, rename internal usage // Renamed from idx
+        setCurrentEventIndex(currentEventIndex + 1); // Use setter, rename internal usage // Renamed from idx
       }, 1000 / speed);
     }
     return () => clearTimeout(timer);
-  }, [isPlaying, currentEventIndex, totalSteps, speed, setIdx]); // Renamed from idx
+  }, [isPlaying, currentEventIndex, totalSteps, speed, setCurrentEventIndex]); // Renamed from idx
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
