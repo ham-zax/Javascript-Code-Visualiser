@@ -9,6 +9,20 @@ module.exports = function traceFunctions({ types: t }) {
     path.isFunctionExpression() ||
     path.isArrowFunctionExpression();
 
+  // Helper to determine function name from a path (Function or its parent context)
+  function determineFunctionName(path) {
+    if (path.node.id && path.node.id.name) {
+      return path.node.id.name;
+    } else if (path.parentPath && path.parentPath.isVariableDeclarator() && path.parentPath.get('id').isIdentifier()) {
+      return path.parentPath.get('id').node.name;
+    } else if (path.parentPath && path.parentPath.isObjectProperty() && path.parentPath.get('key').isIdentifier()) {
+      return path.parentPath.get('key').node.name;
+    } else if (path.parentPath && path.parentPath.isClassMethod()) {
+      return path.parentPath.get('key').node.name;
+    }
+    return 'anonymous';
+  }
+
   // Add a flag to see if the visitor ran at all
   let visitorRan = false;
 
@@ -135,16 +149,7 @@ module.exports = function traceFunctions({ types: t }) {
         // 3. Prepare IDs and Tracer arguments (Copied from user feedback)
         const traceId = path.scope.generateUidIdentifier("traceId");
 // Store traceId name in scope data for ReturnStatement visitor
-        let fnName = 'anonymous';
-        if (path.node.id) {
-            fnName = path.node.id.name;
-        } else if (path.parentPath.isVariableDeclarator() && path.parentPath.get('id').isIdentifier()) {
-            fnName = path.parentPath.get('id').node.name;
-        } else if (path.parentPath.isObjectProperty() && path.parentPath.get('key').isIdentifier()) {
-           fnName = path.parentPath.get('key').node.name;
-        } else if (path.parentPath.isClassMethod()) {
-           fnName = path.parentPath.get('key').node.name;
-        }
+        let fnName = determineFunctionName(path);
         const start = path.node.loc ? t.numericLiteral(path.node.loc.start.line) : t.nullLiteral();
         const end = path.node.loc ? t.numericLiteral(path.node.loc.end.line) : t.nullLiteral();
         const errorParam = path.scope.generateUidIdentifier("err");
@@ -285,16 +290,7 @@ module.exports = function traceFunctions({ types: t }) {
         // traceId should be in scope from the Function visitor's newBody
         // Retrieve traceIdName from scope data
 
-        let fnName = 'anonymous';
-        if (funcPath.node.id) {
-            fnName = funcPath.node.id.name;
-        } else if (funcPath.parentPath.isVariableDeclarator() && funcPath.parentPath.get('id').isIdentifier()) {
-            fnName = funcPath.parentPath.get('id').node.name;
-        } else if (funcPath.parentPath.isObjectProperty() && funcPath.parentPath.get('key').isIdentifier()) {
-           fnName = funcPath.parentPath.get('key').node.name;
-        } else if (funcPath.parentPath.isClassMethod()) {
-           fnName = funcPath.parentPath.get('key').node.name;
-        }
+        let fnName = determineFunctionName(funcPath);
         const start = funcPath.node.loc ? t.numericLiteral(funcPath.node.loc.start.line) : t.nullLiteral();
         const end = funcPath.node.loc ? t.numericLiteral(funcPath.node.loc.end.line) : t.nullLiteral();
 
