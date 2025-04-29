@@ -1,8 +1,8 @@
 // Transforms raw pipeline events into high-level story events per EVENT_SCHEMA.md
 // Transforms raw pipeline events into high-level story events per EVENT_SCHEMA.md
 // Accepts initial state (though currently re-initializes internally) and the array of raw events
-function storyReducer(initialState, rawEvents) { // Accept two arguments
-  console.log('[storyReducer] Received raw events array (length ' + (rawEvents ? rawEvents.length : 'undefined') + ')'); // Log length safely
+function storyReducer(rawEvents = []) { // Accept single argument with default
+  console.log('[storyReducer] Received raw events array (length ' + rawEvents.length + ')');
   const story = [];
   // TODO: Refactor to use initialState properly instead of re-initializing here
   const activeScopes = {}; // scopeId -> scope object

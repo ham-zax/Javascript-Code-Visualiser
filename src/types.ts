@@ -17,3 +17,42 @@ export interface SimulationSnapshot {
   globalScope?: Record<string, { value: any; type?: string }>;
   output: string[];
 }
+
+// Shared types for visualization components
+export type HeapFunctionObject = {
+  id: string;
+  type: 'function';
+  name: string;
+  codeSnippet: string;
+  definingScopeId: string | null;
+};
+
+export interface CallStackFrame {
+  functionName: string;
+  type: string;
+  line?: number;
+  scopeId: string;
+}
+
+export interface VariableInfo {
+  varName: string;
+  value: any | { type: 'functionRef'; id: string };
+  isClosure?: boolean;
+  hasChanged?: boolean;
+}
+
+export interface DisplayScopeInfo {
+  scopeId: string;
+  parentId: string | null;
+  type: string;
+  name: string;
+  variables: VariableInfo[];
+  isActive?: boolean;
+  isPersistent?: boolean;
+  thisBinding?: any;
+}
+
+// Helper interface for building the tree
+export interface ScopeNode extends DisplayScopeInfo {
+  children: ScopeNode[];
+}

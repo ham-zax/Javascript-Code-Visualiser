@@ -94,7 +94,15 @@ console.log(`Worker for ${clientIp} finished. Reducing events...`);
 console.log(`raw event count: ${session.events.length}`);
             // Reduce the collected events to raw events and story events
             const reducedEvents = reduceEvents(session.events);
-            const storyEvents = storyReducer(reducedEvents);
+// --- Debug Logging Start ---
+            console.log('[App.js] Before calling storyReducer - typeof reducedEvents:', typeof reducedEvents);
+            console.log('[App.js] Before calling storyReducer - Array.isArray(reducedEvents):', Array.isArray(reducedEvents));
+            // Optionally log the content if it's an array
+            if (Array.isArray(reducedEvents)) {
+                console.log('[App.js] Before calling storyReducer - reducedEvents content:', JSON.stringify(reducedEvents.map(e => e.type || e))); // Log type or whole event if type missing
+            }
+            // --- Debug Logging End ---
+            const storyEvents = storyReducer(reducedEvents || []) || []; // Ensure array fallback
             console.log(`Sending STORY_LIST to ${clientIp} with ${storyEvents.length} events.`);
             if (ws.readyState === WebSocket.OPEN) {
               try {

@@ -78,11 +78,15 @@ module.exports = function traceFunctions({ types: t }) {
         const end = path.node.loc ? t.numericLiteral(path.node.loc.end.line) : t.nullLiteral();
         const errorParam = path.scope.generateUidIdentifier("err");
 
-        // Retrieve scopeId from traceScope.js
-        let scopeId = "global";
-        if (path.scope && path.scope.data && path.scope.data.scopeId) {
-          scopeId = path.scope.data.scopeId;
+        // Retrieve scopeId directly from the node property set by traceScope.js
+        // Default to 'global' if not found (should ideally always be found for instrumented functions)
+        const funcScopeId = path.node?._funcScopeId ? t.stringLiteral(path.node._funcScopeId) : t.stringLiteral("global");
+        if (!path.node?._funcScopeId) {
+             console.warn(`[traceFunctions EnterFunction] Could not find _funcScopeId on node for ${fnName}. Defaulting to 'global'. Node:`, path.node);
+        } else {
+             console.log(`[traceFunctions EnterFunction] Using scopeId '${path.node._funcScopeId}' from node._funcScopeId for ${fnName}`);
         }
+
 
         // Placeholders for thisBinding and callSiteLine (can be null for now)
         const thisBinding = t.nullLiteral();
@@ -97,7 +101,7 @@ module.exports = function traceFunctions({ types: t }) {
               t.stringLiteral(fnName),
               start,
               end,
-              t.stringLiteral(scopeId), // newScopeId
+              funcScopeId, // Use the retrieved _funcScopeId
               thisBinding,
               callSiteLine
             ]
@@ -113,20 +117,8 @@ module.exports = function traceFunctions({ types: t }) {
             [errorMessageExpr, traceId, t.stringLiteral(fnName), start, end]
           )
         );
-        const exitCall = t.expressionStatement( // Fixed placeholder
-          t.callExpression(
-            t.memberExpression(t.identifier("Tracer"), t.identifier("exitFunc")),
-            [
-              traceId,
-              t.stringLiteral(fnName),
-              start,
-              end,
-              t.stringLiteral(scopeId), // exitingScopeId
-              t.nullLiteral(), // returnValue placeholder
-              t.nullLiteral()  // returnLine placeholder
-            ]
-          )
-        );
+        // REMOVED incorrect/redundant exitCall definition.
+        // The actual exit call is handled by the ReturnStatement visitor.
         const throwStmt = t.throwStatement(errorParam);
 
 

@@ -1,179 +1,152 @@
-// src/components/VisualizationState.tsx
+import React from 'react';
+import ReactFlow, { 
+  Background,
+  Controls,
+  useNodesState,
+  useEdgesState,
+  type Edge
+} from 'reactflow';
 import { Card } from "@/components/ui/card";
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion"; // Keep AccordionContent for Call Stack
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import React from 'react'; // Import React for fragment usage
 
-// Updated types based on task description
-export interface CallStackFrame {
-    name: string;
-    type: string;
-    line?: number;
-}
 
-export interface VariableInfo {
-    varName: string;
-    value: any;
-    isClosure?: boolean;
-    hasChanged?: boolean;
-}
-
-export interface DisplayScopeInfo {
-    scopeId: string | number;
-    parentId: string | number | null;
-    type: 'global' | 'function' | 'block' | 'closure' | string; // Allow other types potentially
-    name: string;
-    variables: VariableInfo[];
-    isActive?: boolean;
-    isPersistent?: boolean;
-    thisBinding?: any; // Keep this if needed
-}
-
-// Helper interface for building the tree
-interface ScopeNode extends DisplayScopeInfo {
-    children: ScopeNode[];
-}
-
+import { 
+  HeapFunctionObject,
+  CallStackFrame,
+  DisplayScopeInfo,
+  VariableInfo
+} from "../types";
 
 interface VisualizationStateProps {
     callStack: CallStackFrame[];
-    scopes: DisplayScopeInfo[]; // Changed to array as per task description
+    scopes: DisplayScopeInfo[];
+    heapObjects: Record<string, HeapFunctionObject>;
+    persistentEnvironments?: DisplayScopeInfo[];
 }
 
-// Helper function to build the scope tree
-const buildScopeTree = (scopes: DisplayScopeInfo[]): ScopeNode[] => {
-    // Handle cases where scopes might not be an array initially
-    if (!Array.isArray(scopes)) {
-        return [];
-    }
+export default function VisualizationState({ callStack, scopes, heapObjects, persistentEnvironments = [] }: VisualizationStateProps) {
+    const scopeMap = React.useMemo(() => {
+        const map = new Map<string | number, DisplayScopeInfo>();
+        scopes.forEach(scope => map.set(scope.scopeId, scope));
+        return map;
+    }, [scopes]);
 
-    const scopeMap: Record<string | number, ScopeNode> = {};
-    const rootScopes: ScopeNode[] = [];
+    const [nodes, setNodes, onNodesChange] = useNodesState([]);
+    const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
-    // Initialize map and add children array
-    scopes.forEach(scope => {
-        scopeMap[scope.scopeId] = { ...scope, children: [] };
-    });
+    React.useEffect(() => {
+        const newNodes: any[] = [];
+        const newEdges: Edge[] = [];
+        let yPos = 0;
 
-    // Build the tree structure
-    scopes.forEach(scope => {
-        const node = scopeMap[scope.scopeId];
-        if (scope.parentId === null || scope.parentId === undefined || !scopeMap[scope.parentId]) {
-            // Root scope or parent not found (treat as root)
-            rootScopes.push(node);
-        } else {
-            // Add to parent's children
-            scopeMap[scope.parentId].children.push(node);
-        }
-    });
+        // Create frame nodes
+        callStack.forEach((frame, i) => {
+            const frameId = `frame-${frame.scopeId}`;
+            newNodes.push({
+                id: frameId,
+                position: { x: 0, y: yPos },
+                data: {
+                    label: (
+                        <div className={`p-2 rounded border ${i === callStack.length - 1 ? 'border-blue-400 bg-blue-50' : 'border-gray-300 bg-gray-50'}`}>
+                            <div className="flex justify-between items-center mb-1">
+                                <span className={`font-medium ${i === callStack.length - 1 ? 'text-blue-700' : 'text-gray-700'}`}>
+                                    {frame.functionName}
+                                </span>
+                                <Badge variant="secondary" className="text-xs">{frame.type}</Badge>
+                            </div>
+                        </div>
+                    )
+                },
+                type: 'frame',
+                width: 300,
+                height: 100
+            });
+            yPos += 120;
 
-    return rootScopes;
-};
+            // Create variable nodes
+            const scope = scopeMap.get(frame.scopeId);
+            if (scope) {
+                scope.variables.forEach((variable, varIndex) => {
+                    const varId = `var-${frame.scopeId}-${variable.varName}`;
+                    newNodes.push({
+                        id: varId,
+                        position: { x: 20, y: yPos + varIndex * 40 },
+                        data: {
+                            label: (
+                                <p className="text-sm">
+                                    <code>{variable.varName}</code>: {JSON.stringify(variable.value)}
+                                </p>
+                            )
+                        },
+                        parentId: frameId,
+                        extent: 'parent',
+                        width: 260,
+                        height: 30
+                    });
 
-// Recursive component to render scopes
-const ScopeRenderer: React.FC<{ scope: ScopeNode }> = ({ scope }) => {
-    const scopeClasses = [
-        'scope-container',
-        `scope-${scope.type.toLowerCase()}`, // Class based on type
-        scope.isActive ? 'scope-active' : '',
-        scope.isPersistent ? 'scope-persistent' : '',
-    ].filter(Boolean).join(' '); // Filter out empty strings and join
+                    // Create edges to heap objects
+                    if (variable.value?.type === 'functionRef' && heapObjects[variable.value.id]) {
+                        newEdges.push({
+                            id: `${varId}-heap-${variable.value.id}`,
+                            source: varId,
+                            target: `heap-${variable.value.id}`,
+                            animated: true,
+                            style: { stroke: '#9333ea' }
+                        });
+                    }
+                });
+                yPos += scope.variables.length * 40 + 20;
+            }
+        });
+
+        // Create heap object nodes
+        Object.values(heapObjects).forEach((obj, index) => {
+            newNodes.push({
+                id: `heap-${obj.id}`,
+                position: { x: 400, y: index * 200 },
+                data: {
+                    label: (
+                        <div className="p-2 rounded border border-purple-300 bg-purple-50 text-sm">
+                            <div className="font-medium text-purple-700">Function: {obj.name}</div>
+                            <div className="text-xs text-gray-500">ID: {obj.id}</div>
+                        </div>
+                    )
+                },
+                width: 300,
+                height: 100
+            });
+
+            // Create edges to defining scope
+            if (obj.definingScopeId) {
+                newEdges.push({
+                    id: `heap-${obj.id}-def`,
+                    source: `heap-${obj.id}`,
+                    target: `frame-${obj.definingScopeId}`,
+                    label: 'defined in',
+                    style: { stroke: '#8884d8' }
+                });
+            }
+        });
+
+        setNodes(newNodes);
+        setEdges(newEdges);
+    }, [callStack, scopes, heapObjects]);
+
 
     return (
-        <div className={scopeClasses}>
-            <div className="scope-header font-semibold">
-                {scope.name} ({scope.type})
-                {scope.isPersistent && <Badge variant="outline" className="ml-2 text-xs">Persistent</Badge>}
-            </div>
-            <div className="scope-variables pl-4 border-l border-gray-300 ml-2"> {/* Indent variables */}
-                {scope.variables.length === 0 && <span className="text-xs text-gray-500 italic">[no variables]</span>}
-                {scope.variables.map((variable, index) => {
-                    const variableClasses = [
-                        'variable-item',
-                        variable.isClosure ? 'variable-closure' : '',
-                        variable.hasChanged ? 'variable-changed' : '',
-                    ].filter(Boolean).join(' ');
-
-                    // Simple value display - might need refinement for complex objects/arrays
-                    const displayValue = typeof variable.value === 'object'
-                        ? JSON.stringify(variable.value)
-                        : String(variable.value);
-
-                    return (
-                        <p key={index} className={variableClasses}>
-                            <code>{variable.varName}</code>: <span className="variable-value">{displayValue}</span>
-                        </p>
-                    );
-                })}
-            </div>
-            {/* Render children scopes recursively */}
-            {scope.children.length > 0 && (
-                <div className="scope-children pl-4 mt-1"> {/* Indent child scopes */}
-                    {scope.children.map(childScope => (
-                        <ScopeRenderer key={childScope.scopeId} scope={childScope} />
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-};
-
-
-export default function VisualizationState({ callStack, scopes }: VisualizationStateProps) {
-    const scopeTree = buildScopeTree(scopes);
-
-    return (
-        <Card className="p-4">
-            <Accordion type="multiple" defaultValue={["call-stack", "scopes"]}>
-                {/* Call Stack */}
-        <AccordionItem value="call-stack">
-          <AccordionTrigger>Call Stack</AccordionTrigger>
-          <AccordionContent>
-            <div className="flex flex-col gap-2">
-              {callStack.length === 0 && (
-                <span className="text-gray-400 text-sm">[empty]</span>
-              )}
-              {callStack.map((frame, i) => (
-                <div
-                  key={i}
-                  className={`flex items-center gap-2 px-2 py-1 rounded ${
-                    i === callStack.length - 1
-                      ? "bg-blue-100 font-bold"
-                      : "bg-gray-100"
-                  }`}
-                >
-                  <span>{frame.name}</span>
-                  <Badge variant="secondary">{frame.type}</Badge>
-                  {typeof frame.line === "number" && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="text-xs text-gray-500 ml-2">Line {frame.line}</span>
-                        </TooltipTrigger>
-                        <TooltipContent>Line number</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-                </div>
-              ))}
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-                {/* Scopes & Memory - Using Nested Structure */}
-                <div className="mt-4">
-                    <h3 className="text-lg font-semibold mb-2">Scopes & Memory</h3>
-                    <div className="flex flex-col gap-2"> {/* Main container for scopes */}
-                        {scopeTree.length === 0 && (
-                            <span className="text-gray-400 text-sm">[no scopes]</span>
-                        )}
-                        {scopeTree.map(rootScope => (
-                            <ScopeRenderer key={rootScope.scopeId} scope={rootScope} />
-                        ))}
-                    </div>
-                </div>
-                {/* End of Scopes & Memory */}
-            </Accordion>
+        <Card className="p-4 relative h-[600px]">
+            <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                fitView
+                attributionPosition="top-right"
+            >
+                <Background />
+                <Controls />
+            </ReactFlow>
         </Card>
     );
 }

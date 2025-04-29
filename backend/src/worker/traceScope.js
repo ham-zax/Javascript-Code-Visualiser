@@ -28,7 +28,7 @@ console.log(`[traceScope] Entering Function visitor for node type: ${path.node.t
         // --- Generate unique scopeId for this function ---
         const scopeId = generateUniqueId('funcScopeId-'); // Use helper function
         path.scope.data = path.scope.data || {};
-        path.node._funcScopeId = scopeId; // Attach ID to the node
+        path.scope.data.scopeId = scopeId; // Attach ID to the scope data
 console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', scopeId, 'NodeID:', path.node._funcScopeId);
 
         // --- Determine parentId (enclosing function or global) ---
@@ -130,7 +130,7 @@ console.log('[traceScope Scope Data Set]:', 'UID:', path.scope.uid, 'ScopeID:', 
               t.memberExpression(t.identifier("Tracer"), t.identifier("captureClosure")),
               [
                 t.stringLiteral(closureId),
-                t.stringLiteral(scopeId),
+                t.stringLiteral(parentId),
                 t.objectExpression(closureProps)
               ]
             )

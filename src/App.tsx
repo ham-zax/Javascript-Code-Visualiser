@@ -4,28 +4,11 @@ import _ from "lodash";
 import { TraceEvent } from "./store/playbackStore";
 import { usePlaybackStore } from "./store/playbackStore";
 
-// Local types for derived state
-type CallStackFrame = {
-  name: string;
-  type: string;
-  line?: number;
-  scopeId: string;
-};
-
-type DisplayScopeInfo = {
-  name: string;
-  type: string;
-  variables: Array<{
-    varName: string;
-    value: any;
-    hasChanged?: boolean;
-    isClosure?: boolean;
-  }>;
-  isPersistent?: boolean;
-  scopeId: string;
-  parentId: string | null;
-  isActive: boolean;
-};
+import { 
+  HeapFunctionObject,
+  CallStackFrame, 
+  DisplayScopeInfo
+} from "./types";
 import CodeEditor from "./components/CodeEditor";
 import ExecutionControls from "./components/ExecutionControls";
 import VisualizationState from "./components/VisualizationState";
@@ -44,21 +27,29 @@ import {
 } from "@/components/ui/sheet";
 import { Settings } from "lucide-react";
 
-/** Derive call stack frames */
-function deriveCallStackState(events: TraceEvent[], idx: number): CallStackFrame[] {
+/** Derive call stack frames using scope name map */
+function deriveCallStackState(
+  events: TraceEvent[],
+  idx: number,
+  scopeIdToNameMap: Map<string, string>
+): CallStackFrame[] {
   const stack: CallStackFrame[] = [];
   for (let i = 0; i <= idx && i < events.length; i++) {
     const event = events[i];
     if (event.type === "CALL") {
       const payload = event.payload as any;
+      const scopeId = payload.newScopeId || payload.scopeId || "";
+      const functionName = scopeIdToNameMap.get(scopeId) || "anonymous"; // Use mapped name
+
+      // Ensure the pushed object matches the updated CallStackFrame type
       stack.push({
-        name: payload.funcName || payload.functionName || "anonymous",
+        functionName: functionName, // Correct property name
         type: payload.closureScopeId ? "closure" : "normal",
         line:
           "line" in payload && typeof payload.line === "number"
             ? payload.line
             : payload.callSiteLine ?? undefined,
-        scopeId: payload.newScopeId || payload.scopeId || "",
+        scopeId: scopeId,
       });
     } else if (event.type === "RETURN") {
       if (stack.length > 0) stack.pop();
@@ -137,16 +128,103 @@ function deriveScopeState(
         ...(typeof variable === "object" && variable !== null ? variable : { value: variable }),
       }));
     }
-    displayScope.variables = vars.map(variable => ({
-      ...variable,
-      hasChanged: `${clonedScope.scopeId}|${variable.varName}` === changedVarKey,
-      isClosure: clonedScope.type === "closure" || (variable as any).isBoundByClosure,
-    }));
+    displayScope.variables = vars.map(variable => {
+        const value = variable.value;
+        const valueStr = typeof value === 'string' ? value : JSON.stringify(value);
+        const isFunction = (typeof value === 'object' && value !== null && value.type === 'function') ||
+                           (typeof value === 'string' && value.startsWith('[Function:'));
+        let displayValue: any = value;
+
+        if (isFunction) {
+            const functionScopeId = value?.functionScopeId || valueStr.split(':')[1]?.trim() || null; // Extract ID if possible
+            if (functionScopeId) {
+                // Store a reference instead of the raw value
+                displayValue = { type: 'functionRef', id: functionScopeId };
+            } else {
+                displayValue = "[Function - ID unknown]"; // Fallback if ID cannot be determined
+            }
+        }
+
+        return {
+            ...variable,
+            value: displayValue, // Use the potentially modified value (reference or primitive)
+            hasChanged: `${clonedScope.scopeId}|${variable.varName}` === changedVarKey,
+            isClosure: clonedScope.type === "closure" || (variable as any).isBoundByClosure,
+        };
+    });
     displayScopes[clonedScope.scopeId] = displayScope;
   });
 
   return displayScopes;
 }
+
+
+/** Derive Heap Objects (Functions) */
+function deriveHeapObjects(
+  events: TraceEvent[],
+  idx: number,
+  scopeIdToNameMap: Map<string, string>
+): Record<string, HeapFunctionObject> {
+  const heapObjects: Record<string, HeapFunctionObject> = {};
+
+  // Iterate through events up to the current index to find function definitions/assignments
+  for (let i = 0; i <= idx && i < events.length; i++) {
+    const event = events[i];
+    let targetPayload: any = null;
+    let scopeSnapshot: any[] | undefined;
+
+    // Look for assignments or returns that might involve functions
+    // Assumption: Function info (like its scopeId and defining scope) is part of the value payload
+    if (event.type === "ASSIGN") {
+      targetPayload = event.payload as any;
+      // Find the most recent scope snapshot *before or at* this event
+      for (let j = i; j >= 0; j--) {
+          if (events[j].type === "STEP_LINE" && (events[j].payload as any)?.scopes) {
+              scopeSnapshot = (events[j].payload as any).scopes;
+              break;
+          }
+      }
+    } else if (event.type === "RETURN") {
+       // Similar logic might be needed for RETURN if functions can be returned
+       // targetPayload = event.payload as any; // Check returnValue
+       // scopeSnapshot = ... find previous STEP_LINE ...
+    } else if (event.type === "STEP_LINE") {
+        // Check for nested ASSIGN events if backend structures them this way
+        // Example: if (event.payload?.subEvent?.type === 'ASSIGN') { targetPayload = event.payload.subEvent.payload; scopeSnapshot = event.payload.scopes }
+    }
+
+
+    if (targetPayload && targetPayload.newValue) {
+      const value = targetPayload.newValue;
+      const valueStr = typeof value === 'string' ? value : JSON.stringify(value); // Handle potential object values
+
+      // Basic check for function representation (adjust based on actual backend output)
+      // Assumption: Backend provides `functionScopeId` and `definingScopeId` on the value object
+      const isFunction = (typeof value === 'object' && value !== null && value.type === 'function') ||
+                         (typeof value === 'string' && value.startsWith('[Function:')); // Fallback string check
+
+      if (isFunction) {
+        const functionScopeId = value?.functionScopeId || valueStr.split(':')[1]?.trim() || `unknown-func-${i}`; // Extract ID if possible
+        const definingScopeId = value?.definingScopeId || targetPayload.scopeId || null; // Best guess for defining scope
+        const functionName = scopeIdToNameMap.get(functionScopeId) || value?.name || 'anonymous';
+
+        if (!heapObjects[functionScopeId]) {
+           heapObjects[functionScopeId] = {
+            id: functionScopeId,
+            type: 'function',
+            name: functionName,
+            // TODO: Get actual code snippet from backend if possible
+            codeSnippet: `function ${functionName}(...) { ... }`,
+            definingScopeId: definingScopeId,
+          };
+        }
+      }
+    }
+  }
+
+  return heapObjects;
+}
+
 
 /** Derive plain-text explanation */
 function deriveExplanation(events: TraceEvent[], idx: number): string {
@@ -287,21 +365,66 @@ greet("World");
 `;
 
 function App() {
-  const { events, idx /* ... other store values ... */ } = usePlaybackStore();
+  // Destructure all needed values from the store *once*
+  const { events, idx, setEvents, replayTo, setIdx, isPlaying, speed } = usePlaybackStore();
   const [currentCode, setCurrentCode] = useState(DEFAULT_CODE);
   const [isRunning, setIsRunning] = useState(false);
 
-  // Derived state
+  // --- State Derivation ---
+
+  // 1. Scope ID to Name Mapping (using useRef as it doesn't trigger re-render itself)
+  const scopeIdToNameMap = React.useRef<Map<string, string>>(new Map());
+
+  // Populate the map whenever events change
+  useEffect(() => {
+    const newMap = new Map<string, string>();
+    newMap.set("global", "Global"); // Initialize global scope
+    events.forEach(event => {
+      if (event.type === "CALL") {
+        const payload = event.payload as any;
+        const scopeId = payload.newScopeId || payload.scopeId;
+        const funcName = payload.funcName || payload.functionName;
+        if (scopeId && funcName) {
+          newMap.set(scopeId, funcName);
+        } else if (scopeId) {
+          // Fallback if name is missing
+          newMap.set(scopeId, `scope-${scopeId.substring(0, 4)}`);
+        }
+      }
+    });
+    scopeIdToNameMap.current = newMap;
+    // console.log("Updated scopeIdToNameMap:", scopeIdToNameMap.current); // For debugging
+  }, [events]);
+
+  // 2. Derived Call Stack (now uses the map)
+  const derivedCallStack = useMemo(
+    () => deriveCallStackState(events, idx, scopeIdToNameMap.current),
+    [events, idx] // Dependency on map ref's *content* is implicit via events/idx
+  );
+
+  // 3. Derived Scopes (placeholder for heap object linking)
+  const derivedScopesRecord = useMemo(
+    () => deriveScopeState(events, idx, derivedCallStack),
+    [events, idx, derivedCallStack]
+  );
+  // Convert scopes record to array for VisualizationState prop
+  const derivedScopesArray = useMemo(() => Object.values(derivedScopesRecord), [derivedScopesRecord]);
+
+
+  // 4. Derived Heap Objects
+  const derivedHeapObjects = useMemo(
+      () => deriveHeapObjects(events, idx, scopeIdToNameMap.current),
+      [events, idx] // Depends on events and current index
+  );
+
+  // 5. Other derived states
   const totalSteps = useMemo(() => events.length, [events]);
-  const derivedCallStack = useMemo(() => deriveCallStackState(events, idx), [events, idx]);
-  const derivedScopes = useMemo(() => deriveScopeState(events, idx, derivedCallStack), [events, idx, derivedCallStack]);
   const derivedExplanation = useMemo(() => deriveExplanation(events, idx), [events, idx]);
   const derivedConsole = useMemo(() => deriveConsoleOutput(events, idx), [events, idx]);
   const derivedHighlightLine = useMemo(() => deriveHighlightedLine(events, idx), [events, idx]);
   // NOTE: derivedHighlightLine is now { nextLine, prevLine }
 
-  // WebSocket logic
-  const { setEvents, replayTo, setIdx, isPlaying, speed } = usePlaybackStore();
+  // --- WebSocket Logic ---
   const [ws, setWs] = useState<WebSocket | null>(null);
 
   // Establish WebSocket connection on mount
@@ -415,7 +538,7 @@ function App() {
 
           {/* Col 2: Visualization & Explanation */}
           <div className="space-y-6">
-            <VisualizationState callStack={derivedCallStack} scopes={derivedScopes} />
+            <VisualizationState callStack={derivedCallStack} scopes={derivedScopesArray} heapObjects={derivedHeapObjects} />
             <ConsolePane lines={derivedConsole} />
             {/* <ExplanationOutput explanation={derivedExplanation} consoleOutput={derivedConsole} /> */}
           </div>
