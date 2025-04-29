@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect } from "react";
 import _ from "lodash";
 import { TraceEvent } from "./store/playbackStore";
 import { usePlaybackStore } from "./store/playbackStore";
-import { deriveScopeState, deriveHighlightedLine  } from "./lib/stateDerivationUtils";
+import { deriveScopeState, deriveHighlightedLine, deriveCallStackState, deriveHeapObjects, deriveExplanation, deriveConsoleOutput } from "./lib/stateDerivationUtils";
 
 import { 
   HeapFunctionObject,
@@ -22,151 +22,9 @@ import {
   Sheet,
   SheetContent,
   SheetTrigger,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
 } from "@/components/ui/sheet";
 import { Settings } from "lucide-react";
 
-/** Derive call stack frames using scope name map */
-function deriveCallStackState(
-  events: TraceEvent[],
-  currentEventIndex: number, // Renamed from idx
-  scopeIdToNameMap: Map<string, string>
-): CallStackFrame[] {
-  const stack: CallStackFrame[] = [];
-  for (let i = 0; i <= currentEventIndex && i < events.length; i++) { // Renamed from idx
-    const event = events[i];
-    if (event.type === "CALL") {
-      const payload = event.payload as any;
-      const scopeId = payload.newScopeId || payload.scopeId || "";
-      const functionName = scopeIdToNameMap.get(scopeId) || "anonymous"; // Use mapped name
-
-      // Ensure the pushed object matches the updated CallStackFrame type
-      stack.push({
-        functionName: functionName, // Correct property name
-        type: payload.closureScopeId ? "closure" : "normal",
-        line:
-          "line" in payload && typeof payload.line === "number"
-            ? payload.line
-            : payload.callSiteLine ?? undefined,
-        scopeId: scopeId,
-      });
-    } else if (event.type === "RETURN") {
-      if (stack.length > 0) stack.pop();
-    }
-  }
-  return stack;
-}
-
-
-
-/** Derive Heap Objects (Functions) */
-function deriveHeapObjects(
-  events: TraceEvent[],
-  currentEventIndex: number, // Renamed from idx
-  scopeIdToNameMap: Map<string, string>
-): Record<string, HeapFunctionObject> {
-  const heapObjects: Record<string, HeapFunctionObject> = {};
-
-  // Iterate through events up to the current index to find function definitions/assignments
-  for (let i = 0; i <= currentEventIndex && i < events.length; i++) { // Renamed from idx
-    const event = events[i];
-    let targetPayload: any = null;
-    let scopeSnapshot: any[] | undefined;
-
-    // Look for assignments or returns that might involve functions
-    // Assumption: Function info (like its scopeId and defining scope) is part of the value payload
-    if (event.type === "ASSIGN") {
-      targetPayload = event.payload as any;
-      // Find the most recent scope snapshot *before or at* this event
-      for (let j = i; j >= 0; j--) {
-          if (events[j].type === "STEP_LINE" && (events[j].payload as any)?.scopes) {
-              scopeSnapshot = (events[j].payload as any).scopes;
-              break;
-          }
-      }
-    } else if (event.type === "RETURN") {
-       // Similar logic might be needed for RETURN if functions can be returned
-       // targetPayload = event.payload as any; // Check returnValue
-       // scopeSnapshot = ... find previous STEP_LINE ...
-    } else if (event.type === "STEP_LINE") {
-        // Check for nested ASSIGN events if backend structures them this way
-        // Example: if (event.payload?.subEvent?.type === 'ASSIGN') { targetPayload = event.payload.subEvent.payload; scopeSnapshot = event.payload.scopes }
-    }
-
-
-    if (targetPayload && targetPayload.newValue) {
-      const value = targetPayload.newValue;
-      const valueStr = typeof value === 'string' ? value : JSON.stringify(value); // Handle potential object values
-
-      // Basic check for function representation (adjust based on actual backend output)
-      // Assumption: Backend provides `functionScopeId` and `definingScopeId` on the value object
-      const isFunction = (typeof value === 'object' && value !== null && value.type === 'function') ||
-                         (typeof value === 'string' && value.startsWith('[Function:')); // Fallback string check
-
-      if (isFunction) {
-        const functionScopeId = value?.functionScopeId || valueStr.split(':')[1]?.trim() || `unknown-func-${i}`; // Extract ID if possible
-        const definingScopeId = value?.definingScopeId || targetPayload.scopeId || null; // Best guess for defining scope
-        const functionName = scopeIdToNameMap.get(functionScopeId) || value?.name || 'anonymous';
-
-        if (!heapObjects[functionScopeId]) {
-           heapObjects[functionScopeId] = {
-            id: functionScopeId,
-            type: 'function',
-            name: functionName,
-            // TODO: Get actual code snippet from backend if possible
-            codeSnippet: `function ${functionName}(...) { ... }`,
-            definingScopeId: definingScopeId,
-          };
-        }
-      }
-    }
-  }
-
-  return heapObjects;
-}
-
-
-/** Derive plain-text explanation */
-function deriveExplanation(events: TraceEvent[], currentEventIndex: number): string { // Renamed from idx
-  if (currentEventIndex < 0 || currentEventIndex >= events.length) { // Renamed from idx
-    return currentEventIndex === -1 ? "Execution not started." : "Execution finished."; // Renamed from idx
-  }
-  const event = events[currentEventIndex]; // Renamed from idx
-  const payload = event.payload as any;
-  switch (event.type) {
-    case "STEP_LINE":
-      return `Executing line ${payload.line}. Statement type: ${payload.statementType || "unknown"}.`;
-    case "CALL":
-      return `Calling function "${payload.funcName || "anonymous"}" from line ${
-        "line" in payload && typeof payload.line === "number"
-          ? payload.line
-          : payload.callSiteLine || "?"
-      }. Creating scope ${payload.newScopeId}.`;
-    case "RETURN":
-      return `Returning value ${JSON.stringify(payload.returnValue)} from function "${payload.funcName || "anonymous"}". Exiting scope ${payload.exitingScopeId}.`;
-    case "ASSIGN":
-      return `Assigning value ${JSON.stringify(payload.newValue)} to variable "${payload.varName}" in scope ${payload.scopeId} (line ${
-        "line" in payload && typeof payload.line === "number" ? payload.line : "?"
-      }).`;
-    case "CONSOLE":
-      return `Printing to console: ${payload.text?.trim()}`;
-    default:
-      return `Processing event type: ${event.type}`;
-  }
-}
-
-/** Derive console output lines */
-function deriveConsoleOutput(events: TraceEvent[], currentEventIndex: number): string[] { // Renamed from idx
-  const output: string[] = [];
-  for (let i = 0; i < currentEventIndex && i < events.length; i++) { // Renamed from idx
-    if (events[i].type === "CONSOLE") {
-      output.push((events[i].payload as any).text?.trim());
-    }
-  }
-  return output;
-}
 
 /**
  * Derives the next and previous highlighted lines for dual highlighting.
