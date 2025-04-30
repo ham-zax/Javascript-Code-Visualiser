@@ -9,7 +9,18 @@ function storyReducer(initialState, rawEvents) {
   const story = [];
 
   // --- Internal State ---
-  const activeScopes = {};
+  function _initializeGlobalScope() {
+    return {
+      scopeId: 'global',
+      type: 'global',
+      name: 'global',
+      variables: {},
+      parentId: null,
+      isPersistent: true,
+      thisBinding: null
+    };
+  }
+  const activeScopes = { 'global': _initializeGlobalScope() };
   const scopeStack = ['global'];
   const invocationToLexicalMap = {};
   const heapSnapshot = {};
@@ -73,30 +84,88 @@ function storyReducer(initialState, rawEvents) {
    }
   
 
-  // Helper to find the defining scope's lexical ID for a variable
-  function findDefiningScope(variableName, startingLexicalScopeId) {
-    let currentId = startingLexicalScopeId;
-    while (currentId) {
-      const scope = activeScopes[currentId];
-      if (scope?.variables && Object.prototype.hasOwnProperty.call(scope.variables, variableName)) {
-        return currentId;
-      }
-      if (currentId === 'global' || !scope?.parentId) {
-        break;
-      }
-      currentId = scope.parentId;
-    }
-    if (startingLexicalScopeId !== 'global' && activeScopes['global']?.variables && Object.prototype.hasOwnProperty.call(activeScopes['global'].variables, variableName)) {
-        return 'global';
-    }
-    return null;
-  }
+  // (findDefiningScope moved inside _processScopeForSnapshot)
 
   // Helper to build the scopes snapshot for STEP_LINE events
   function buildScopesSnapshot() {
     console.log(`[storyReducer] Building scope snapshot. Current invocation stack: ${scopeStack.join(',')}`);
     const visibleLexicalScopeIds = new Set();
     const scopesToProcess = [...scopeStack];
+
+    // Helper: Process a single scope for the snapshot (now local to buildScopesSnapshot)
+    function _processScopeForSnapshot(lexicalScopeId, activeScopes) {
+      // findDefiningScope is now nested here for encapsulation
+      function findDefiningScope(variableName, startingLexicalScopeId) {
+        let currentId = startingLexicalScopeId;
+        while (currentId) {
+          const scope = activeScopes[currentId];
+          if (scope?.variables && Object.prototype.hasOwnProperty.call(scope.variables, variableName)) {
+            return currentId;
+          }
+          if (currentId === 'global' || !scope?.parentId) {
+            break;
+          }
+          currentId = scope.parentId;
+        }
+        if (
+          startingLexicalScopeId !== 'global' &&
+          activeScopes['global']?.variables &&
+          Object.prototype.hasOwnProperty.call(activeScopes['global'].variables, variableName)
+        ) {
+          return 'global';
+        }
+        return null;
+      }
+
+      const originalScope = activeScopes[lexicalScopeId];
+      if (!originalScope) {
+        console.warn(`[storyReducer] Snapshot: Lexical Scope ID ${lexicalScopeId} not found in activeScopes during final mapping!`);
+        return null;
+      }
+
+      const scopeClone = _.cloneDeep(originalScope);
+      if (!scopeClone) {
+        console.error(`[storyReducer] Snapshot: Failed to clone scope ${lexicalScopeId}. Skipping.`);
+        return null;
+      }
+
+      if (scopeClone.variables) {
+        const filteredVariables = {};
+        for (const varName in scopeClone.variables) {
+          if (isInternalTracerVar(varName)) continue;
+          const originalVarData = scopeClone.variables[varName];
+          const definingScopeId = findDefiningScope(varName, lexicalScopeId);
+
+          let bindingType = 'local';
+          if (definingScopeId === 'global') {
+            bindingType = 'global';
+          } else if (definingScopeId && definingScopeId !== lexicalScopeId) {
+            const definingScope = activeScopes[definingScopeId];
+            if (definingScope?.isPersistent) {
+              bindingType = 'closure';
+            } else {
+              bindingType = 'ancestor-non-persistent';
+              console.log(`[storyReducer] Variable '${varName}' in scope '${lexicalScopeId}' defined in non-persistent ancestor '${definingScopeId}'. Type: ${bindingType}`);
+            }
+          } else if (!definingScopeId) {
+            bindingType = 'unknown';
+            console.warn(`[storyReducer] Could not find defining scope for variable '${varName}' starting from scope '${lexicalScopeId}'.`);
+          }
+          filteredVariables[varName] = { ...originalVarData, bindingType };
+        }
+        scopeClone.variables = filteredVariables;
+      }
+      if (scopeClone.variables && typeof scopeClone.variables === 'object' && !Array.isArray(scopeClone.variables)) {
+        scopeClone.variables = Object.entries(scopeClone.variables).map(([varName, data]) => ({
+          varName,
+          ...data
+        }));
+      } else if (!scopeClone.variables) {
+        scopeClone.variables = [];
+      }
+
+      return scopeClone;
+    }
 
     while (scopesToProcess.length > 0) {
       const currentInvocationId = scopesToProcess.shift();
@@ -135,7 +204,7 @@ function storyReducer(initialState, rawEvents) {
 
     const snapshot = [];
     for (const lexicalScopeId of visibleLexicalScopeIds) {
-      const processedScope = _processScopeForSnapshot(lexicalScopeId, activeScopes, findDefiningScope);
+      const processedScope = _processScopeForSnapshot(lexicalScopeId, activeScopes);
       if (processedScope) {
         snapshot.push(processedScope);
       }
@@ -145,68 +214,9 @@ function storyReducer(initialState, rawEvents) {
     return snapshot;
   }
 // Helper: Process a single scope for the snapshot
-function _processScopeForSnapshot(lexicalScopeId, activeScopes, findDefiningScope) {
-  const originalScope = activeScopes[lexicalScopeId];
-  if (!originalScope) {
-    console.warn(`[storyReducer] Snapshot: Lexical Scope ID ${lexicalScopeId} not found in activeScopes during final mapping!`);
-    return null;
-  }
-
-  const scopeClone = _.cloneDeep(originalScope);
-  if (!scopeClone) {
-    console.error(`[storyReducer] Snapshot: Failed to clone scope ${lexicalScopeId}. Skipping.`);
-    return null;
-  }
-
-  if (scopeClone.variables) {
-    const filteredVariables = {};
-    for (const varName in scopeClone.variables) {
-      if (isInternalTracerVar(varName)) continue;
-      const originalVarData = scopeClone.variables[varName];
-      const definingScopeId = findDefiningScope(varName, lexicalScopeId);
-
-      let bindingType = 'local';
-      if (definingScopeId === 'global') {
-        bindingType = 'global';
-      } else if (definingScopeId && definingScopeId !== lexicalScopeId) {
-        const definingScope = activeScopes[definingScopeId];
-        if (definingScope?.isPersistent) {
-          bindingType = 'closure';
-        } else {
-          bindingType = 'ancestor-non-persistent';
-          console.log(`[storyReducer] Variable '${varName}' in scope '${lexicalScopeId}' defined in non-persistent ancestor '${definingScopeId}'. Type: ${bindingType}`);
-        }
-      } else if (!definingScopeId) {
-        bindingType = 'unknown';
-        console.warn(`[storyReducer] Could not find defining scope for variable '${varName}' starting from scope '${lexicalScopeId}'.`);
-      }
-      filteredVariables[varName] = { ...originalVarData, bindingType };
-    }
-    scopeClone.variables = filteredVariables;
-  }
-  if (scopeClone.variables && typeof scopeClone.variables === 'object' && !Array.isArray(scopeClone.variables)) {
-    scopeClone.variables = Object.entries(scopeClone.variables).map(([varName, data]) => ({
-      varName,
-      ...data
-    }));
-  } else if (!scopeClone.variables) {
-    scopeClone.variables = [];
-  }
-
-  return scopeClone;
-}
 
   // --- Initialize Global Scope ---
-  activeScopes['global'] = {
-    scopeId: 'global',
-    type: 'global',
-    name: 'global',
-    variables: {},
-    parentId: null,
-    isPersistent: true,
-    thisBinding: null
-  };
-  console.log('[storyReducer] Initialized activeScopes: ', _.cloneDeep(activeScopes));
+  // Global scope is now initialized via _initializeGlobalScope helper above.
 
   // --- Process Raw Events ---
   for (let i = 0; i < rawEvents.length; i++) {
