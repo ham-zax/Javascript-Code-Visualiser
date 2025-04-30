@@ -1,9 +1,5 @@
-/**
- * Helper to check if a variable name is internal
- */
-function isInternalTracerVar(name) {
-  return typeof name === "string" && (name.startsWith("_traceId") || name.startsWith("_callId") || name.startsWith("_tempReturnValue"));
-}
+const _ = require('lodash');
+
 
 // Main reducer function
 function storyReducer(initialState, rawEvents) {
@@ -21,6 +17,11 @@ function storyReducer(initialState, rawEvents) {
   let pendingLexicalScopeId = null;
   const callSiteLineStack = [];
   // --- End Internal State ---
+
+  // Helper to check if a variable name is internal (moved inside storyReducer)
+  function isInternalTracerVar(name) {
+    return typeof name === "string" && (name.startsWith("_traceId") || name.startsWith("_callId") || name.startsWith("_tempReturnValue"));
+  }
 
    // --- Helper Functions ---
   
@@ -71,33 +72,6 @@ function storyReducer(initialState, rawEvents) {
        };
    }
   
-   // Deep clone helper (basic version)
-   function deepClone(obj) {
-       try {
-           if (obj === null || typeof obj !== 'object') {
-               return obj;
-           }
-           if (obj instanceof Date) {
-               return new Date(obj.getTime());
-           }
-           if (Array.isArray(obj)) {
-               return obj.map(item => deepClone(item));
-           }
-           if (obj instanceof Object) {
-               const copy = {};
-              for (const key in obj) {
-                  if (Object.prototype.hasOwnProperty.call(obj, key)) {
-                      copy[key] = deepClone(obj[key]);
-                  }
-              }
-              return copy;
-          }
-      } catch (e) {
-           console.error("[storyReducer] Error during deepClone:", e, "Object:", obj);
-           return null;
-      }
-      return obj;
-  }
 
   // Helper to find the defining scope's lexical ID for a variable
   function findDefiningScope(variableName, startingLexicalScopeId) {
@@ -178,7 +152,7 @@ function _processScopeForSnapshot(lexicalScopeId, activeScopes, findDefiningScop
     return null;
   }
 
-  const scopeClone = deepClone(originalScope);
+  const scopeClone = _.cloneDeep(originalScope);
   if (!scopeClone) {
     console.error(`[storyReducer] Snapshot: Failed to clone scope ${lexicalScopeId}. Skipping.`);
     return null;
@@ -232,7 +206,7 @@ function _processScopeForSnapshot(lexicalScopeId, activeScopes, findDefiningScop
     isPersistent: true,
     thisBinding: null
   };
-  console.log('[storyReducer] Initialized activeScopes: ', deepClone(activeScopes));
+  console.log('[storyReducer] Initialized activeScopes: ', _.cloneDeep(activeScopes));
 
   // --- Process Raw Events ---
   for (let i = 0; i < rawEvents.length; i++) {
@@ -327,7 +301,7 @@ function _processScopeForSnapshot(lexicalScopeId, activeScopes, findDefiningScop
         case 'Step': {
           console.log(`[storyReducer] Handling Step for line ${evt.payload.line}`);
           const scopesSnapshot = buildScopesSnapshot();
-          const heapSnapshotClone = deepClone(heapSnapshot);
+          const heapSnapshotClone = _.cloneDeep(heapSnapshot);
 
           story.push({
             type: 'STEP_LINE',
