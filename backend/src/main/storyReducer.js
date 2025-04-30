@@ -22,22 +22,69 @@ function storyReducer(initialState, rawEvents) {
   const callSiteLineStack = [];
   // --- End Internal State ---
 
-  // --- Helper Functions ---
-
-  // Deep clone helper (basic version)
-  function deepClone(obj) {
-      try {
-          if (obj === null || typeof obj !== 'object') {
-              return obj;
-          }
-          if (obj instanceof Date) {
-              return new Date(obj.getTime());
-          }
-          if (Array.isArray(obj)) {
-              return obj.map(item => deepClone(item));
-          }
-          if (obj instanceof Object) {
-              const copy = {};
+   // --- Helper Functions ---
+  
+   // Handles 'VarWrite' events: updates activeScopes and returns ASSIGN payload or null
+   function _handleVarWriteEvent(evt, activeScopes, invocationToLexicalMap) {
+       const invocationScopeId = evt.payload.scopeId;
+       const name = evt.payload.name;
+       const val = evt.payload.val;
+       const valueType = evt.payload.valueType;
+       const line = evt.payload.line;
+  
+       if (isInternalTracerVar(name)) return null;
+  
+       if (!invocationScopeId) {
+           console.error('[storyReducer] ERROR: VarWrite event missing scopeId!');
+           return null;
+       }
+  
+       const lexicalScopeIdToUpdate = invocationScopeId === 'global'
+           ? 'global'
+           : invocationToLexicalMap[invocationScopeId];
+  
+       if (!lexicalScopeIdToUpdate) {
+           console.error(`[storyReducer] CRITICAL: VarWrite lookup failed for invocation scope ${invocationScopeId}! Cannot update variable '${name}'. Map state: ${JSON.stringify(invocationToLexicalMap)}`);
+           return null;
+       }
+  
+       console.log(`[storyReducer] Handling VarWrite for var '${name}' in lexical scope ${lexicalScopeIdToUpdate} (derived from invocation ${invocationScopeId})`);
+  
+       const scopeToUpdate = activeScopes[lexicalScopeIdToUpdate];
+       if (!scopeToUpdate) {
+           console.error(`[storyReducer] CRITICAL: VarWrite target lexical scope ${lexicalScopeIdToUpdate} not found in activeScopes! Cannot update '${name}'. Active: ${Object.keys(activeScopes)}`);
+           return null;
+       }
+  
+       if (!scopeToUpdate.variables) scopeToUpdate.variables = {};
+  
+       scopeToUpdate.variables[name] = { value: val, type: valueType };
+  
+       console.log(`[storyReducer] Updated variable '${name}' in lexical scope '${lexicalScopeIdToUpdate}':`, JSON.stringify(scopeToUpdate.variables[name]));
+  
+       return {
+           varName: name,
+           newValue: val,
+           valueType: valueType,
+           scopeId: invocationScopeId,
+           line: line
+       };
+   }
+  
+   // Deep clone helper (basic version)
+   function deepClone(obj) {
+       try {
+           if (obj === null || typeof obj !== 'object') {
+               return obj;
+           }
+           if (obj instanceof Date) {
+               return new Date(obj.getTime());
+           }
+           if (Array.isArray(obj)) {
+               return obj.map(item => deepClone(item));
+           }
+           if (obj instanceof Object) {
+               const copy = {};
               for (const key in obj) {
                   if (Object.prototype.hasOwnProperty.call(obj, key)) {
                       copy[key] = deepClone(obj[key]);
@@ -267,52 +314,14 @@ function _processScopeForSnapshot(lexicalScopeId, activeScopes, findDefiningScop
           break;
         }
         case 'VarWrite': {
-          const invocationScopeId = evt.payload.scopeId;
-          const name = evt.payload.name;
-          const val = evt.payload.val;
-          const valueType = evt.payload.valueType;
-          const line = evt.payload.line;
-
-          if (isInternalTracerVar(name)) break;
-
-          if (!invocationScopeId) {
-            console.error('[storyReducer] ERROR: VarWrite event missing scopeId!');
-            break;
+          const assignPayload = _handleVarWriteEvent(evt, activeScopes, invocationToLexicalMap);
+          if (assignPayload) {
+            story.push({
+              type: 'ASSIGN',
+              payload: assignPayload
+            });
+            console.log(`[storyReducer] Pushed ASSIGN for ${assignPayload.varName} with invocation scope ${assignPayload.scopeId} at line ${assignPayload.line}`);
           }
-
-          const lexicalScopeIdToUpdate = invocationScopeId === 'global'
-            ? 'global'
-            : invocationToLexicalMap[invocationScopeId];
-
-          if (!lexicalScopeIdToUpdate) {
-            console.error(`[storyReducer] CRITICAL: VarWrite lookup failed for invocation scope ${invocationScopeId}! Cannot update variable '${name}'. Map state: ${JSON.stringify(invocationToLexicalMap)}`);
-            break;
-          }
-
-          console.log(`[storyReducer] Handling VarWrite for var '${name}' in lexical scope ${lexicalScopeIdToUpdate} (derived from invocation ${invocationScopeId})`);
-
-          const scopeToUpdate = activeScopes[lexicalScopeIdToUpdate];
-          if (!scopeToUpdate) {
-            console.error(`[storyReducer] CRITICAL: VarWrite target lexical scope ${lexicalScopeIdToUpdate} not found in activeScopes! Cannot update '${name}'. Active: ${Object.keys(activeScopes)}`);
-            break;
-          }
-
-          if (!scopeToUpdate.variables) scopeToUpdate.variables = {};
-
-          scopeToUpdate.variables[name] = { value: val, type: valueType };
-          console.log(`[storyReducer] Updated variable '${name}' in lexical scope '${lexicalScopeIdToUpdate}':`, JSON.stringify(scopeToUpdate.variables[name]));
-
-          story.push({
-            type: 'ASSIGN',
-            payload: {
-              varName: name,
-              newValue: val,
-              valueType: valueType,
-              scopeId: invocationScopeId,
-              line: line
-            }
-          });
-          console.log(`[storyReducer] Pushed ASSIGN for ${name} with invocation scope ${invocationScopeId} at line ${line}`);
           break;
         }
         case 'Step': {
