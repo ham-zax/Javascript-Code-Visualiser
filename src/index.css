@@ -264,6 +264,25 @@ display: block;
   color: oklch(0.4 0 0); /* Darker grey for value */
 }
 
+/* Style for the variable type indicator */
+.variable-type {
+  font-size: 0.7rem;
+  color: var(--chart-1);
+  background-color: oklch(var(--chart-1) / 0.1);
+  padding: 0.1rem 0.3rem;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  margin-left: 0.5rem;
+}
+
+.dark .variable-type {
+  color: var(--chart-3);
+  background-color: oklch(var(--chart-3) / 0.15);
+}
+
+.dark .variable-type {
+  color: var(--muted-foreground); /* Ensure dark mode uses its muted color */
+}
 .dark .scope-global { background-color: oklch(0.3 0.05 260 / 50%); border-color: oklch(0.5 0.08 260); }
 .dark .scope-function { background-color: oklch(0.3 0.05 150 / 50%); border-color: oklch(0.5 0.08 150); }
 .dark .scope-block { background-color: oklch(0.3 0.03 80 / 50%); border-color: oklch(0.5 0.05 80); }

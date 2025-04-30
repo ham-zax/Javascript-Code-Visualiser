@@ -93,6 +93,54 @@ import { CallStackFrame, DisplayScopeInfo } from "../types";
 /**
  * Derive scopes mapping using Lodash deep clone, array variables, and type guards
  */
+/**
+ * Helper to determine a variable's binding type and defining scope.
+ */
+function _getVariableBindingInfo(
+  variableName: string,
+  currentLexicalScopeId: string,
+  activeScopes: Record<string, DisplayScopeInfo>
+): { bindingType: string; definingScopeId: string | null } {
+  // Find the defining scope for the variable
+  let scopeId: string | null = currentLexicalScopeId;
+  let definingScopeId: string | null = null;
+  let bindingType: string = "unknown";
+  let found = false;
+
+  while (scopeId && activeScopes[scopeId]) {
+    const scope: DisplayScopeInfo = activeScopes[scopeId];
+    const hasVar = Array.isArray(scope.variables)
+      ? scope.variables.some((v: any) => v.varName === variableName)
+      : false;
+    if (hasVar) {
+      definingScopeId = scopeId;
+      found = true;
+      break;
+    }
+    scopeId = scope.parentId;
+  }
+
+  if (found && definingScopeId) {
+    if (definingScopeId === currentLexicalScopeId) {
+      bindingType = "local";
+    } else if (
+      activeScopes[definingScopeId] &&
+      activeScopes[definingScopeId].type === "global"
+    ) {
+      bindingType = "global";
+    } else if (
+      activeScopes[definingScopeId] &&
+      activeScopes[definingScopeId].type === "closure"
+    ) {
+      bindingType = "closure";
+    } else {
+      bindingType = "ancestor-non-persistent";
+    }
+  }
+
+  return { bindingType, definingScopeId };
+}
+
 export function deriveScopeState(
   events: TraceEvent[],
   currentEventIndex: number,
@@ -145,15 +193,26 @@ export function deriveScopeState(
   const activeScopeIds = new Set(currentCallStack.map(frame => frame.scopeId));
   activeScopeIds.add("global");
 
+  // Build a map of scopeId -> DisplayScopeInfo for binding lookup
+  let tempScopes: Record<string, DisplayScopeInfo> = {};
+
   originalSnapshot.forEach(scope => {
     if (!scope) return;
     const clonedScope = _.cloneDeep(scope);
-    const displayScope: DisplayScopeInfo = {
+    tempScopes[clonedScope.scopeId] = {
       ...clonedScope,
       isActive: activeScopeIds.has(clonedScope.scopeId) || clonedScope.type === "closure",
+      variables: Array.isArray(clonedScope.variables)
+        ? clonedScope.variables
+        : [],
+    };
+  });
+
+  Object.values(tempScopes).forEach(clonedScope => {
+    const displayScope: DisplayScopeInfo = {
+      ...clonedScope,
       variables: [],
     };
-    // Convert variables object or array to array of variable objects
     let vars: Array<any> = [];
     if (Array.isArray(clonedScope.variables)) {
       vars = clonedScope.variables;
@@ -164,28 +223,36 @@ export function deriveScopeState(
       }));
     }
     displayScope.variables = vars.map(variable => {
-        const value = variable.value;
-        const valueStr = typeof value === 'string' ? value : JSON.stringify(value);
-        const isFunction = (typeof value === 'object' && value !== null && value.type === 'function') ||
-                           (typeof value === 'string' && value.startsWith('[Function:'));
-        let displayValue: any = value;
+      const value = variable.value;
+      const valueStr = typeof value === 'string' ? value : JSON.stringify(value);
+      const isFunction = (typeof value === 'object' && value !== null && value.type === 'function') ||
+                         (typeof value === 'string' && value.startsWith('[Function:'));
+      let displayValue: any = value;
 
-        if (isFunction) {
-            const functionScopeId = value?.functionScopeId || valueStr.split(':')[1]?.trim() || null; // Extract ID if possible
-            if (functionScopeId) {
-                // Store a reference instead of the raw value
-                displayValue = { type: 'functionRef', id: functionScopeId };
-            } else {
-                displayValue = "[Function - ID unknown]"; // Fallback if ID cannot be determined
-            }
+      if (isFunction) {
+        const functionScopeId = value?.functionScopeId || valueStr.split(':')[1]?.trim() || null;
+        if (functionScopeId) {
+          displayValue = { type: 'functionRef', id: functionScopeId };
+        } else {
+          displayValue = "[Function - ID unknown]";
         }
+      }
 
-        return {
-            ...variable,
-            value: displayValue, // Use the potentially modified value (reference or primitive)
-            hasChanged: `${clonedScope.scopeId}|${variable.varName}` === changedVarKey,
-            isClosure: clonedScope.type === "closure" || (variable as any).isBoundByClosure,
-        };
+      // Use the new helper to get binding info
+      const { bindingType, definingScopeId } = _getVariableBindingInfo(
+        variable.varName,
+        clonedScope.scopeId,
+        tempScopes
+      );
+
+      return {
+        ...variable,
+        value: displayValue,
+        hasChanged: `${clonedScope.scopeId}|${variable.varName}` === changedVarKey,
+        isClosure: clonedScope.type === "closure" || (variable as any).isBoundByClosure,
+        bindingType,
+        definingScopeId,
+      };
     });
     displayScopes[clonedScope.scopeId] = displayScope;
   });
@@ -294,33 +361,65 @@ export function deriveHeapObjects(
 // --- Extracted from App.tsx ---
 
 /** Derive plain-text explanation */
-export function deriveExplanation(events: TraceEvent[], currentEventIndex: number): string {
-  if (currentEventIndex < 0 || currentEventIndex >= events.length) {
-    return currentEventIndex === -1 ? "Execution not started." : "Execution finished.";
-  }
-  const event = events[currentEventIndex];
+export function deriveExplanation(
+  event: TraceEvent,
+  scopeIdToNameMap: Map<string, string>
+): string {
+  if (!event) return "No event.";
+
   switch (event.type) {
     case "STEP_LINE": {
       const payload = event.payload as StepLinePayload;
-      return `Executing line ${payload.line}. Statement type: ${payload.statementType || "unknown"}.`;
+      const statementType = payload.statementType
+        ? ` (${payload.statementType})`
+        : "";
+      return `Executing line ${payload.line}${statementType}.`;
     }
     case "CALL": {
       const payload = event.payload as CallPayload;
-      return `Calling function "${payload.funcName || "anonymous"}" from line ${
+      const funcName = payload.funcName || "anonymous";
+      const scopeName =
+        (payload.newScopeId && scopeIdToNameMap.get(payload.newScopeId)) ||
+        payload.newScopeId ||
+        "unknown-scope";
+      const callSiteLine =
         payload.callSiteLine !== null && payload.callSiteLine !== undefined
           ? payload.callSiteLine
-          : "?"
-      }. Creating scope ${payload.newScopeId}.`;
+          : "?";
+      const args =
+        payload.args && Array.isArray(payload.args)
+          ? payload.args.map((a: any) =>
+              typeof a === "object" ? JSON.stringify(a) : String(a)
+            )
+          : [];
+      const argsStr = args.length > 0 ? `(${args.join(", ")})` : "()";
+      return `Calling function '${funcName}'${argsStr} from line ${callSiteLine}. Creating scope ${scopeName}.`;
     }
     case "RETURN": {
       const payload = event.payload as ReturnPayload;
-      return `Returning value ${JSON.stringify(payload.returnValue)} from function "${payload.funcName || "anonymous"}". Exiting scope ${payload.exitingScopeId}.`;
+      const funcName = payload.funcName || "anonymous";
+      const returnValue = JSON.stringify(payload.returnValue);
+      const exitingScope =
+        (payload.exitingScopeId && scopeIdToNameMap.get(payload.exitingScopeId)) ||
+        payload.exitingScopeId ||
+        "unknown-scope";
+      return `Returning ${returnValue} from function '${funcName}'. Exiting scope ${exitingScope}.`;
     }
     case "ASSIGN": {
       const payload = event.payload as AssignPayload;
-      return `Assigning value ${JSON.stringify(payload.newValue)} to variable "${payload.varName}" in scope ${payload.scopeId} (line ${
-        payload.line !== undefined ? payload.line : "?"
-      }).`;
+      const scopeName =
+        (payload.scopeId && scopeIdToNameMap.get(payload.scopeId)) ||
+        payload.scopeId ||
+        "unknown-scope";
+      const valueStr =
+        typeof payload.newValue === "object"
+          ? JSON.stringify(payload.newValue)
+          : String(payload.newValue);
+      const lineStr =
+        payload.line !== undefined && payload.line !== null
+          ? payload.line
+          : "?";
+      return `Assigning ${valueStr} to variable '${payload.varName}' in scope '${scopeName}' (line ${lineStr}).`;
     }
     case "CONSOLE": {
       const payload = event.payload as ConsolePayload;

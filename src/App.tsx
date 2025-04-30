@@ -98,7 +98,14 @@ function App() {
 
   // 5. Other derived states
   const totalSteps = useMemo(() => events.length, [events]);
-  const derivedExplanation = useMemo(() => deriveExplanation(events, currentEventIndex), [events, currentEventIndex]); // Renamed from idx
+  const derivedExplanation = useMemo(() => {
+    const event = events[currentEventIndex];
+    return event
+      ? deriveExplanation(event, scopeIdToNameMap.current)
+      : currentEventIndex === -1
+        ? "Execution not started."
+        : "Execution finished.";
+  }, [events, currentEventIndex, scopeIdToNameMap.current]);
   const derivedConsole = useMemo(() => deriveConsoleOutput(events, currentEventIndex), [events, currentEventIndex]); // Renamed from idx
   const derivedHighlightLine = useMemo(() => deriveHighlightedLine(events, currentEventIndex), [events, currentEventIndex]); // Renamed from idx
   // NOTE: derivedHighlightLine is now { nextLine, prevLine }

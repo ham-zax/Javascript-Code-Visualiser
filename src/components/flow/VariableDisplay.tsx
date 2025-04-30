@@ -26,7 +26,63 @@ const VariableDisplay: React.FC<VariableDisplayProps> = ({ variables, scopeId })
     if (bindingType === "global") return "text-blue-700 font-bold";
     return "";
   };
-
+ 
+  // Helper function to get a display string for the variable type
+  // Assumes VariableInfo might have a 'type' property, or infers from value
+  const getTypeDisplayString = (varInfo: VariableInfo): string => {
+    const type = varInfo.type; // Use explicit type if available
+    const value = varInfo.value;
+ 
+    if (typeof value === 'object' && value?.type === 'functionRef') return '(function ref)';
+    if (typeof value === 'object' && value?.type === 'reference') {
+       // Use the valueType if provided within the reference object
+       return value.valueType ? `(${value.valueType} ref)` : '(ref)';
+    }
+ 
+    // Prefer explicit type if present
+    if (type) {
+        switch (type) {
+            case 'number': return '(number)';
+            case 'string': return '(string)';
+            case 'boolean': return '(boolean)';
+            case 'undefined': return '(undefined)';
+            case 'null': return '(null)';
+            case 'object': return '(object)'; // Could be array or plain object
+            case 'array': return '(array)';
+            case 'function': return '(function)'; // For actual function values, not refs yet
+            default: return `(${type})`; // Show unknown types
+        }
+    }
+ 
+    // Fallback inference if explicit type is missing
+    if (value === null) return '(null)';
+    if (typeof value === 'undefined') return '(undefined)';
+    if (Array.isArray(value)) return '(array)';
+    if (typeof value === 'function') return '(function)'; // Should be caught by functionRef ideally
+    if (typeof value === 'object') return '(object)'; // Generic object
+    return `(${typeof value})`;
+  };
+ 
+  // Function to render the value itself
+  const renderValue = (value: any): React.ReactNode => {
+    if (typeof value === 'object' && value?.type === 'functionRef') {
+      return <span className="text-purple-600" title={`Function ref ${value.heapId}`}>ƒ</span>; // Use heapId from ref
+    }
+    if (typeof value === 'object' && value?.type === 'reference') {
+      // Display the heap ID for references
+      return <span className="text-blue-600" title={`Reference to heap object ${value.heapId}`}>{`{ref: ${value.heapId}}`}</span>;
+    }
+    if (typeof value === 'string') {
+      // Truncate long strings
+      const displayString = value.length > 30 ? value.substring(0, 27) + '...' : value;
+      return `"${displayString}"`;
+    }
+    if (value === null) return 'null';
+    if (typeof value === 'undefined') return 'undefined';
+    // Add more specific rendering if needed (e.g., for arrays)
+    return String(value);
+  };
+ 
   return (
     <table className="w-full text-left text-xs border-collapse">
       <tbody>
@@ -35,17 +91,17 @@ const VariableDisplay: React.FC<VariableDisplayProps> = ({ variables, scopeId })
             key={`${scopeId}-${variable.varName}`}
             className={`border-t border-gray-200${variable.hasChanged ? ' variable-changed' : ''}`}
           >
+            {/* Variable Name Column */}
             <td className={`py-0.5 pr-2 font-medium ${getBindingClass(variable.bindingType)}`}>
               {getBindingIcon(variable.bindingType)}
               {variable.varName}:
             </td>
-            <td className="py-0.5">
-              {typeof variable.value === 'object' && variable.value?.type === 'functionRef'
-                ? <span className="text-purple-600" title={`Function ref ${variable.value.id}`}>ƒ</span>
-                : typeof variable.value === 'string'
-                  ? `"${variable.value}"`
-                  : String(variable.value)
-              }
+            {/* Value and Type Column */}
+            <td className="py-0.5 flex items-center space-x-1">
+              <span>{renderValue(variable.value)}</span>
+              <span className="variable-type text-gray-500 text-[0.65rem]">
+                {getTypeDisplayString(variable)}
+              </span>
             </td>
           </tr>
         ))}
