@@ -1,6 +1,5 @@
 const _ = require('lodash');
 
-
 // Main reducer function
 function storyReducer(initialState, rawEvents) {
   rawEvents = Array.isArray(rawEvents) ? rawEvents : initialState || [];
@@ -25,66 +24,92 @@ function storyReducer(initialState, rawEvents) {
   const invocationToLexicalMap = {};
   const heapSnapshot = {};
   const pendingPersistence = new Set();
-  let pendingLexicalScopeId = null;
+  let pendingLexicalScopeId = null; // This will be modified by _processLocalsEvent via closure
   const callSiteLineStack = [];
   // --- End Internal State ---
 
-  // Helper to check if a variable name is internal (moved inside storyReducer)
+  // Helper to check if a variable name is internal
   function isInternalTracerVar(name) {
     return typeof name === "string" && (name.startsWith("_traceId") || name.startsWith("_callId") || name.startsWith("_tempReturnValue"));
   }
 
-   // --- Helper Functions ---
-  
-   // Handles 'VarWrite' events: updates activeScopes and returns ASSIGN payload or null
-   function _handleVarWriteEvent(evt, activeScopes, invocationToLexicalMap) {
-       const invocationScopeId = evt.payload.scopeId;
-       const name = evt.payload.name;
-       const val = evt.payload.val;
-       const valueType = evt.payload.valueType;
-       const line = evt.payload.line;
-  
-       if (isInternalTracerVar(name)) return null;
-  
-       if (!invocationScopeId) {
-           console.error('[storyReducer] ERROR: VarWrite event missing scopeId!');
-           return null;
-       }
-  
-       const lexicalScopeIdToUpdate = invocationScopeId === 'global'
-           ? 'global'
-           : invocationToLexicalMap[invocationScopeId];
-  
-       if (!lexicalScopeIdToUpdate) {
-           console.error(`[storyReducer] CRITICAL: VarWrite lookup failed for invocation scope ${invocationScopeId}! Cannot update variable '${name}'. Map state: ${JSON.stringify(invocationToLexicalMap)}`);
-           return null;
-       }
-  
-       console.log(`[storyReducer] Handling VarWrite for var '${name}' in lexical scope ${lexicalScopeIdToUpdate} (derived from invocation ${invocationScopeId})`);
-  
-       const scopeToUpdate = activeScopes[lexicalScopeIdToUpdate];
-       if (!scopeToUpdate) {
-           console.error(`[storyReducer] CRITICAL: VarWrite target lexical scope ${lexicalScopeIdToUpdate} not found in activeScopes! Cannot update '${name}'. Active: ${Object.keys(activeScopes)}`);
-           return null;
-       }
-  
-       if (!scopeToUpdate.variables) scopeToUpdate.variables = {};
-  
-       scopeToUpdate.variables[name] = { value: val, type: valueType };
-  
-       console.log(`[storyReducer] Updated variable '${name}' in lexical scope '${lexicalScopeIdToUpdate}':`, JSON.stringify(scopeToUpdate.variables[name]));
-  
-       return {
-           varName: name,
-           newValue: val,
-           valueType: valueType,
-           scopeId: invocationScopeId,
-           line: line
-       };
-   }
-  
+  // --- Helper Functions ---
 
-  // (findDefiningScope moved inside _processScopeForSnapshot)
+  // Handles console events: ConsoleLog, ConsoleWarn, ConsoleError
+  function _processConsoleEvent(evt, story) {
+    const text = (evt.payload.text || evt.payload.message || '').trim();
+    console.log(`[storyReducer] Handling ${evt.type}: ${text}`);
+    story.push({ type: 'CONSOLE', payload: { text } });
+  }
+
+  // Handles 'Closure' events: updates activeScopes and pendingPersistence
+  function _processClosureEvent(evt, activeScopes, pendingPersistence) {
+    const { closureId, parentId } = evt.payload;
+
+    if (!parentId || parentId === 'unknown-no-scope' || parentId === 'unknown-missing-funcScopeId') {
+      console.warn(`[storyReducer] Closure event for '${closureId}' has invalid parentId '${parentId}'! Cannot mark persistent.`);
+      return;
+    }
+
+    console.log(`[storyReducer] Handling Closure event: Scope '${closureId}' closes over parent scope '${parentId}'`);
+    const outerScope = activeScopes[parentId];
+
+    if (outerScope) {
+      outerScope.isPersistent = true;
+      console.log(`[storyReducer] Marked outer scope '${parentId}' as persistent.`);
+    } else {
+      console.warn(`[storyReducer] Closure: Outer scope '${parentId}' not found yet. Adding to pendingPersistence.`);
+      pendingPersistence.add(parentId);
+    }
+  }
+
+  // Handles 'VarWrite' events: updates activeScopes and returns ASSIGN payload or null
+  function processVarWriteEventAndUpdateScopes(evt, activeScopes, invocationToLexicalMap) { // Renamed
+    const invocationScopeId = evt.payload.scopeId;
+    const name = evt.payload.name;
+    const val = evt.payload.val;
+    const valueType = evt.payload.valueType;
+    const line = evt.payload.line;
+
+    if (isInternalTracerVar(name)) return null;
+
+    if (!invocationScopeId) {
+      console.error('[storyReducer] ERROR: VarWrite event missing scopeId!');
+      return null;
+    }
+
+    const lexicalScopeIdToUpdate = invocationScopeId === 'global'
+      ? 'global'
+      : invocationToLexicalMap[invocationScopeId];
+
+    if (!lexicalScopeIdToUpdate) {
+      console.error(`[storyReducer] CRITICAL: VarWrite lookup failed for invocation scope ${invocationScopeId}! Cannot update variable '${name}'. Map state: ${JSON.stringify(invocationToLexicalMap)}`);
+      return null;
+    }
+
+    console.log(`[storyReducer] Handling VarWrite for var '${name}' in lexical scope ${lexicalScopeIdToUpdate} (derived from invocation ${invocationScopeId})`);
+
+    const scopeToUpdate = activeScopes[lexicalScopeIdToUpdate];
+    if (!scopeToUpdate) {
+      console.error(`[storyReducer] CRITICAL: VarWrite target lexical scope ${lexicalScopeIdToUpdate} not found in activeScopes! Cannot update '${name}'. Active: ${Object.keys(activeScopes)}`);
+      return null;
+    }
+
+    if (!scopeToUpdate.variables) scopeToUpdate.variables = {};
+
+    scopeToUpdate.variables[name] = { value: val, type: valueType };
+
+    console.log(`[storyReducer] Updated variable '${name}' in lexical scope '${lexicalScopeIdToUpdate}':`, JSON.stringify(scopeToUpdate.variables[name]));
+
+    return {
+      varName: name,
+      newValue: val,
+      valueType: valueType,
+      scopeId: invocationScopeId,
+      line: line
+    };
+  }
+
 
   // Helper to build the scopes snapshot for STEP_LINE events
   function buildScopesSnapshot() {
@@ -187,20 +212,20 @@ function storyReducer(initialState, rawEvents) {
         scopesToProcess.push(scope.parentId);
       }
       if (scope?.closureScopeId && !visibleLexicalScopeIds.has(scope.closureScopeId)) {
-           scopesToProcess.push(scope.closureScopeId);
+        scopesToProcess.push(scope.closureScopeId);
       }
     }
 
-     Object.keys(activeScopes).forEach(lexicalId => {
-        if (activeScopes[lexicalId].isPersistent && !visibleLexicalScopeIds.has(lexicalId)) {
-            visibleLexicalScopeIds.add(lexicalId);
-            let parentId = activeScopes[lexicalId].parentId;
-            while(parentId && !visibleLexicalScopeIds.has(parentId)){
-                 visibleLexicalScopeIds.add(parentId);
-                 parentId = activeScopes[parentId]?.parentId;
-            }
+    Object.keys(activeScopes).forEach(lexicalId => {
+      if (activeScopes[lexicalId].isPersistent && !visibleLexicalScopeIds.has(lexicalId)) {
+        visibleLexicalScopeIds.add(lexicalId);
+        let parentId = activeScopes[lexicalId].parentId;
+        while (parentId && !visibleLexicalScopeIds.has(parentId)) {
+          visibleLexicalScopeIds.add(parentId);
+          parentId = activeScopes[parentId]?.parentId;
         }
-     });
+      }
+    });
 
     const snapshot = [];
     for (const lexicalScopeId of visibleLexicalScopeIds) {
@@ -213,10 +238,52 @@ function storyReducer(initialState, rawEvents) {
     console.log(`[storyReducer] Built snapshot with ${snapshot.length} scopes (Lexical IDs: ${Array.from(visibleLexicalScopeIds).join(', ')})`);
     return snapshot;
   }
-// Helper: Process a single scope for the snapshot
 
-  // --- Initialize Global Scope ---
-  // Global scope is now initialized via _initializeGlobalScope helper above.
+  // Helper to process 'Locals' event (extracted)
+  function _processLocalsEvent(evt, activeScopes, pendingPersistence) {
+    const lexicalScopeId = evt.payload.scopeId;
+    const parentLexicalId = evt.payload.parentId;
+    const locals = evt.payload.locals || {};
+
+    if (!lexicalScopeId) {
+      console.error('[storyReducer] ERROR: Locals event missing scopeId!');
+      return; // Return early if no scopeId
+    }
+    console.log(`[storyReducer] Handling Locals for lexical scope ${lexicalScopeId}, parent ${parentLexicalId}`);
+
+    if (!activeScopes[lexicalScopeId]) {
+      activeScopes[lexicalScopeId] = {
+        scopeId: lexicalScopeId,
+        type: 'function',
+        name: lexicalScopeId, // Will be updated by EnterFunction
+        variables: {},
+        parentId: parentLexicalId,
+        closureScopeId: null,
+        isPersistent: pendingPersistence.has(lexicalScopeId),
+        thisBinding: null
+      };
+      console.log(`[storyReducer] Created scope object for lexical ${lexicalScopeId}`);
+    } else {
+      console.log(`[storyReducer] Updating existing scope ${lexicalScopeId} with Locals data`);
+      if (!activeScopes[lexicalScopeId].parentId) activeScopes[lexicalScopeId].parentId = parentLexicalId;
+      if (pendingPersistence.has(lexicalScopeId)) activeScopes[lexicalScopeId].isPersistent = true;
+    }
+
+    for (const paramName in locals) {
+      if (!isInternalTracerVar(paramName)) {
+        activeScopes[lexicalScopeId].variables[paramName] = { value: locals[paramName], type: typeof locals[paramName] };
+      }
+    }
+
+    if (activeScopes[lexicalScopeId].isPersistent) {
+      pendingPersistence.delete(lexicalScopeId);
+    }
+
+    // Update the outer 'pendingLexicalScopeId' via closure
+    pendingLexicalScopeId = lexicalScopeId;
+    console.log(`[storyReducer] Stored pendingLexicalScopeId = ${pendingLexicalScopeId}`);
+  }
+
 
   // --- Process Raw Events ---
   for (let i = 0; i < rawEvents.length; i++) {
@@ -235,70 +302,16 @@ function storyReducer(initialState, rawEvents) {
           break;
         }
         case 'Locals': {
-          const lexicalScopeId = evt.payload.scopeId;
-          const parentLexicalId = evt.payload.parentId;
-          const locals = evt.payload.locals || {};
-
-          if (!lexicalScopeId) {
-            console.error('[storyReducer] ERROR: Locals event missing scopeId!');
-            break;
-          }
-          console.log(`[storyReducer] Handling Locals for lexical scope ${lexicalScopeId}, parent ${parentLexicalId}`);
-
-          if (!activeScopes[lexicalScopeId]) {
-            activeScopes[lexicalScopeId] = {
-              scopeId: lexicalScopeId,
-              type: 'function',
-              name: lexicalScopeId,
-              variables: {},
-              parentId: parentLexicalId,
-              closureScopeId: null,
-              isPersistent: pendingPersistence.has(lexicalScopeId),
-              thisBinding: null
-            };
-             console.log(`[storyReducer] Created scope object for lexical ${lexicalScopeId}`);
-          } else {
-            console.log(`[storyReducer] Updating existing scope ${lexicalScopeId} with Locals data`);
-            if (!activeScopes[lexicalScopeId].parentId) activeScopes[lexicalScopeId].parentId = parentLexicalId;
-            if (pendingPersistence.has(lexicalScopeId)) activeScopes[lexicalScopeId].isPersistent = true;
-          }
-
-           for (const paramName in locals) {
-              if (!isInternalTracerVar(paramName)) {
-                  activeScopes[lexicalScopeId].variables[paramName] = { value: locals[paramName], type: typeof locals[paramName] };
-              }
-          }
-
-          if (activeScopes[lexicalScopeId].isPersistent) {
-              pendingPersistence.delete(lexicalScopeId);
-          }
-
-          pendingLexicalScopeId = lexicalScopeId;
-          console.log(`[storyReducer] Stored pendingLexicalScopeId = ${pendingLexicalScopeId}`);
+          // Call the extracted helper function
+          _processLocalsEvent(evt, activeScopes, pendingPersistence);
           break;
         }
         case 'Closure': {
-          const { closureId, parentId } = evt.payload;
-
-          if (!parentId || parentId === 'unknown-no-scope' || parentId === 'unknown-missing-funcScopeId') {
-             console.warn(`[storyReducer] Closure event for '${closureId}' has invalid parentId '${parentId}'! Cannot mark persistent.`);
-             break;
-          }
-
-          console.log(`[storyReducer] Handling Closure event: Scope '${closureId}' closes over parent scope '${parentId}'`);
-          const outerScope = activeScopes[parentId];
-
-          if (outerScope) {
-            outerScope.isPersistent = true;
-            console.log(`[storyReducer] Marked outer scope '${parentId}' as persistent.`);
-          } else {
-            console.warn(`[storyReducer] Closure: Outer scope '${parentId}' not found yet. Adding to pendingPersistence.`);
-            pendingPersistence.add(parentId);
-          }
+          _processClosureEvent(evt, activeScopes, pendingPersistence);
           break;
         }
         case 'VarWrite': {
-          const assignPayload = _handleVarWriteEvent(evt, activeScopes, invocationToLexicalMap);
+          const assignPayload = processVarWriteEventAndUpdateScopes(evt, activeScopes, invocationToLexicalMap); // Updated function name
           if (assignPayload) {
             story.push({
               type: 'ASSIGN',
@@ -367,7 +380,7 @@ function storyReducer(initialState, rawEvents) {
               thisBinding: thisBinding
             }
           });
-           console.log(`[storyReducer] Pushed CALL event for ${name} (invocation ${newScopeId})`);
+          console.log(`[storyReducer] Pushed CALL event for ${name} (invocation ${newScopeId})`);
 
           scopeStack.push(newScopeId);
           console.log(`[storyReducer] Pushed invocation ${newScopeId} onto stack. Stack: ${scopeStack.join(',')}`);
@@ -392,7 +405,7 @@ function storyReducer(initialState, rawEvents) {
             scopeStack.pop();
             console.log(`[storyReducer] Popped invocation scope ${exitingScopeId}. Stack after pop: ${scopeStack.join(',')}`);
           } else {
-             console.warn(`[storyReducer] ExitFunction: Stack mismatch or empty stack when trying to pop ${exitingScopeId}. Stack: ${scopeStack.join(',')}`);
+            console.warn(`[storyReducer] ExitFunction: Stack mismatch or empty stack when trying to pop ${exitingScopeId}. Stack: ${scopeStack.join(',')}`);
           }
 
           const exitedLexicalId = invocationToLexicalMap[exitingScopeId];
@@ -404,9 +417,7 @@ function storyReducer(initialState, rawEvents) {
         case 'ConsoleLog':
         case 'ConsoleWarn':
         case 'ConsoleError': {
-          const text = evt.payload.text || evt.payload.message || '';
-          console.log(`[storyReducer] Handling ${evt.type}: ${text.trim()}`);
-          story.push({ type: 'CONSOLE', payload: { text: text } });
+          _processConsoleEvent(evt, story);
           break;
         }
         default:
