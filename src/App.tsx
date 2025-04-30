@@ -10,7 +10,7 @@ import {
   CallStackFrame, 
   DisplayScopeInfo
 } from "./types";
-import CodeEditor from "./components/CodeEditor";
+import { CodeViewer } from "./components/CodeViewer";
 import ExecutionControls from "./components/ExecutionControls";
 import VisualizationState from "./components/VisualizationState";
 import { ConsolePane } from "./components/ConsolePane";
@@ -107,7 +107,7 @@ function App() {
         : "Execution finished.";
   }, [events, currentEventIndex, scopeIdToNameMap.current]);
   const derivedConsole = useMemo(() => deriveConsoleOutput(events, currentEventIndex), [events, currentEventIndex]); // Renamed from idx
-  const derivedHighlightLine = useMemo(() => deriveHighlightedLine(events, currentEventIndex), [events, currentEventIndex]); // Renamed from idx
+  // Removed derivedHighlightLine as it's now handled by CodeViewer internally
   // NOTE: derivedHighlightLine is now { nextLine, prevLine }
 
   // 6. Derived Persistent Environments
@@ -241,7 +241,7 @@ function App() {
           {/* Col 1: Code & Controls */}
           <div className="space-y-6">
             {/* Pass both nextLine and prevLine for dual highlighting */}
-            <CodeEditor code={currentCode} highlightInfo={derivedHighlightLine} onChange={setCurrentCode} />
+            <CodeViewer code={currentCode} globals={{}} frames={[]} />
             <ExecutionControls />
           </div>
 

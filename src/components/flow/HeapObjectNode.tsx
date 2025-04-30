@@ -1,14 +1,31 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react'; // Add useEffect, useRef
 import { Handle, Position } from 'reactflow';
 import { HeapObjectData } from '../../types'; // Adjust path as needed
 import VariableDisplay from './VariableDisplay';
 
 interface HeapObjectNodeProps {
-  data: HeapObjectData;
+  data: HeapObjectData & { isNew?: boolean }; // Add isNew to data type
   id: string;
 }
 
 const HeapObjectNode: React.FC<HeapObjectNodeProps> = ({ data, id }) => {
+  const nodeRef = useRef<HTMLDivElement>(null); // Create ref
+
+  // Effect to handle entry animation
+  useEffect(() => {
+    if (data.isNew && nodeRef.current) {
+      const element = nodeRef.current;
+      element.classList.add('node-enter-active'); // Apply animation class
+
+      // Remove class after animation duration (match CSS)
+      const timer = setTimeout(() => {
+        element.classList.remove('node-enter-active');
+      }, 500); // 500ms matches the planned CSS animation duration
+
+      return () => clearTimeout(timer); // Cleanup timeout on unmount or re-render
+    }
+  }, [data.isNew]); // Run effect when isNew changes
+
   const isFunction = data.type === 'function';
   const isArray = data.type === 'array';
   const isObject = data.type === 'object';
@@ -32,6 +49,7 @@ const HeapObjectNode: React.FC<HeapObjectNodeProps> = ({ data, id }) => {
 
   return (
     <div
+      ref={nodeRef} // Assign ref to the main div
       // Keep base styling: background, border, rounded, shadow, min-width, relative
       className={`react-flow__node-default ${bgClass} border-2 ${borderClass} rounded-lg shadow-md min-w-[190px] relative`}
     >

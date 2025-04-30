@@ -22,7 +22,6 @@ interface ConsoleBubble {
 }
 
 export interface CodeViewerHandle {
-  setHighlights(highlights: Highlight[]): void;
   reset(): void;
 }
 
@@ -233,29 +232,6 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
   // --- Imperative Handle ---
   // Exposes methods callable via the ref
   useImperativeHandle(ref, () => ({
-    // Sets Monaco's internal decorations (used by useEffect below)
-    setHighlights(newHighlights: Highlight[]) {
-      const editor = editorRef.current;
-      if (!editor) return;
-      const newDecorations = newHighlights.map(h => {
-        let className = '';
-        switch (h.type) {
-          case 'current': className = 'highlight-current'; break;
-          case 'return': className = 'highlight-return'; break;
-          case 'call': className = 'highlight-call'; break;
-          case 'next': className = 'highlight-next-step'; break;
-          case 'prev': className = 'highlight-last-executed'; break;
-          default: className = 'highlight-current';
-        }
-        return {
-          range: new monaco.Range(h.line, 1, h.line, 1),
-          options: { isWholeLine: true, className }
-        };
-      });
-      decorationIdsRef.current = editor.deltaDecorations(decorationIdsRef.current, newDecorations);
-      // Trigger animated position update after Monaco decorations are set
-      updateHighlightAndArrowPositions();
-    },
     // Resets all highlights, decorations, and bubbles
     reset() {
       const editor = editorRef.current;
@@ -269,7 +245,7 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
         return [];
       });
     }
-  }), [updateHighlightAndArrowPositions]); // Use memoized updateHighlightAndArrowPositions
+  }), []); // No dependencies needed
 
   // --- Effects ---
 
@@ -309,8 +285,14 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
     const currentEvent = events[currentEventIndex]; // Renamed from idx
     const newHighlights = getHighlightsFromState(); // Calculate highlights based on current event
 
-    // Update Monaco decorations via the imperative handle
-    handle.setHighlights(newHighlights);
+    // Update decorations directly
+    if (editorRef.current) {
+      const newDecorations = newHighlights.map(h => ({
+        range: new monaco.Range(h.line, 1, h.line, 1),
+        options: { isWholeLine: true }
+      }));
+      decorationIdsRef.current = editorRef.current.deltaDecorations(decorationIdsRef.current, newDecorations);
+    }
 
     // Handle Console Bubbles specifically for 'CONSOLE' events
     if (currentEvent.type === 'CONSOLE') {
@@ -342,7 +324,7 @@ export const CodeViewer = forwardRef<CodeViewerHandle, CodeViewerProps>(({ code,
 
     // Note: updateHighlightAndArrowPositions is called inside handle.setHighlights
 
-  }, [currentEventIndex, events, code, ref, getHighlightsFromState, updateHighlightAndArrowPositions, setConsoleBubbles]); // Use memoized functions, add missing state setters // Renamed from idx
+  }, [currentEventIndex, events, code, getHighlightsFromState, updateHighlightAndArrowPositions, setConsoleBubbles]); // Use memoized functions, add missing state setters // Renamed from idx
 
   // Effect to clean up hover provider and bubble timeouts on unmount
   useEffect(() => {

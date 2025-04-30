@@ -301,3 +301,19 @@ display: block;
   background-color: oklch(0.98 0.05 250 / 60%);
   transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
 }
+
+/* --- Node Entry Animation --- */
+@keyframes node-enter-animation {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.node-enter-active {
+  animation: node-enter-animation 0.5s ease-out forwards;
+}

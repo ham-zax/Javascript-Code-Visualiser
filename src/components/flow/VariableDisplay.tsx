@@ -1,5 +1,7 @@
 import React from 'react';
 import { Variable } from '../../types'; // Assuming types.ts is in src/
+import { Badge } from '../ui/badge';
+import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip';
 
 import { VariableInfo } from '../../types';
 
@@ -33,44 +35,76 @@ const VariableDisplay: React.FC<VariableDisplayProps> = ({ variables, scopeId })
     const type = varInfo.type; // Use explicit type if available
     const value = varInfo.value;
  
-    if (typeof value === 'object' && value?.type === 'functionRef') return '(function ref)';
+    if (typeof value === 'object' && value?.type === 'functionRef') return 'function ref';
     if (typeof value === 'object' && value?.type === 'reference') {
        // Use the valueType if provided within the reference object
-       return value.valueType ? `(${value.valueType} ref)` : '(ref)';
+       return value.valueType ? `${value.valueType} ref` : 'ref';
     }
  
     // Prefer explicit type if present
     if (type) {
         switch (type) {
-            case 'number': return '(number)';
-            case 'string': return '(string)';
-            case 'boolean': return '(boolean)';
-            case 'undefined': return '(undefined)';
-            case 'null': return '(null)';
-            case 'object': return '(object)'; // Could be array or plain object
-            case 'array': return '(array)';
-            case 'function': return '(function)'; // For actual function values, not refs yet
-            default: return `(${type})`; // Show unknown types
+            case 'number': return 'number';
+            case 'string': return 'string';
+            case 'boolean': return 'boolean';
+            case 'undefined': return 'undefined';
+            case 'null': return 'null';
+            case 'object': return 'object'; // Could be array or plain object
+            case 'array': return 'array';
+            case 'function': return 'function'; // For actual function values, not refs yet
+            default: return type; // Show unknown types
         }
     }
  
     // Fallback inference if explicit type is missing
-    if (value === null) return '(null)';
-    if (typeof value === 'undefined') return '(undefined)';
-    if (Array.isArray(value)) return '(array)';
-    if (typeof value === 'function') return '(function)'; // Should be caught by functionRef ideally
-    if (typeof value === 'object') return '(object)'; // Generic object
-    return `(${typeof value})`;
+    if (value === null) return 'null';
+    if (typeof value === 'undefined') return 'undefined';
+    if (Array.isArray(value)) return 'array';
+    if (typeof value === 'function') return 'function'; // Should be caught by functionRef ideally
+    if (typeof value === 'object') return 'object'; // Generic object
+    return typeof value;
+  };
+ 
+  const getTypeVariant = (varInfo: VariableInfo): 'default' | 'secondary' | 'destructive' => {
+    const type = varInfo.type;
+    const value = varInfo.value;
+ 
+    if (type === 'undefined' || type === 'null' || value === null || typeof value === 'undefined') {
+      return 'destructive';
+    }
+ 
+    if (typeof value === 'object' && (value?.type === 'functionRef' || value?.type === 'reference')) {
+      return 'secondary';
+    }
+ 
+    return 'default';
   };
  
   // Function to render the value itself
   const renderValue = (value: any): React.ReactNode => {
     if (typeof value === 'object' && value?.type === 'functionRef') {
-      return <span className="text-purple-600" title={`Function ref ${value.heapId}`}>ƒ</span>; // Use heapId from ref
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="text-purple-600">ƒ</span>
+          </TooltipTrigger>
+          <TooltipContent>
+            Reference to function {value.heapId}
+          </TooltipContent>
+        </Tooltip>
+      );
     }
     if (typeof value === 'object' && value?.type === 'reference') {
-      // Display the heap ID for references
-      return <span className="text-blue-600" title={`Reference to heap object ${value.heapId}`}>{`{ref: ${value.heapId}}`}</span>;
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="text-blue-600">{`{ref: ${value.heapId}}`}</span>
+          </TooltipTrigger>
+          <TooltipContent>
+            Reference to heap object {value.heapId} of type {value.valueType || 'unknown'}
+          </TooltipContent>
+        </Tooltip>
+      );
     }
     if (typeof value === 'string') {
       // Truncate long strings
@@ -99,9 +133,12 @@ const VariableDisplay: React.FC<VariableDisplayProps> = ({ variables, scopeId })
             {/* Value and Type Column */}
             <td className="py-0.5 flex items-center space-x-1">
               <span>{renderValue(variable.value)}</span>
-              <span className="variable-type text-gray-500 text-[0.65rem]">
+              <Badge
+                variant={getTypeVariant(variable)}
+                className="text-[0.65rem]"
+              >
                 {getTypeDisplayString(variable)}
-              </span>
+              </Badge>
             </td>
           </tr>
         ))}

@@ -1,5 +1,5 @@
 // src/components/VisualizationState.tsx
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react'; // Add useState
 import ReactFlow, {
   Background,
   Controls as ReactFlowControls, // Renamed to avoid confusion
@@ -74,6 +74,7 @@ export default function VisualizationState({
 
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+    const [previousNodeIds, setPreviousNodeIds] = useState<Set<string>>(new Set()); // Add state for previous IDs
 
     // Memoize scope map for efficient lookups
     const scopeMap = useMemo(() => {
@@ -289,11 +290,30 @@ export default function VisualizationState({
          });
 
         console.log("[VizState] Setting", newNodes.length, "nodes and", newEdges.length, "edges.");
-        setNodes(newNodes);
+
+        // --- Identify newly added nodes ---
+        const currentNodeIds = new Set(newNodes.map(n => n.id));
+        const addedNodeIds = new Set([...currentNodeIds].filter(id => !previousNodeIds.has(id)));
+        console.log("[VizState] Added node IDs:", addedNodeIds); // Debugging
+
+        // --- Add isNew flag to new nodes ---
+        const animatedNodes = newNodes.map(node => ({
+            ...node,
+            data: {
+                ...node.data,
+                isNew: addedNodeIds.has(node.id)
+            }
+        }));
+
+        setNodes(animatedNodes); // Use nodes with the isNew flag
         setEdges(newEdges);
 
+        // --- Update previous node IDs for the next render ---
+        setPreviousNodeIds(currentNodeIds);
+
     // Dependencies: Trigger recalculation if any relevant part of the state changes
-    }, [callStack, scopes, heapObjects, persistentEnvironments, scopeMap]); // Added scopeMap dependency
+    // previousNodeIds should NOT be in dependencies to avoid infinite loops
+    }, [callStack, scopes, heapObjects, persistentEnvironments, scopeMap, setNodes, setEdges]); // Added setNodes, setEdges as recommended by React hooks linting
 
     return (
         <Card className="p-0 relative h-[600px] w-full overflow-hidden border shadow-sm rounded-lg"> {/* Style card */}
