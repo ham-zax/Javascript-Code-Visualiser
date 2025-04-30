@@ -19,12 +19,19 @@ function storyReducer(initialState, rawEvents) {
       thisBinding: null
     };
   }
+  // Stores the current state of all known lexical scopes (global, function, closure) by their unique lexical ID.
   const activeScopes = { 'global': _initializeGlobalScope() };
+  // Tracks the current call stack using invocation IDs (temporary IDs for each function call).
   const scopeStack = ['global'];
+  // Maps temporary invocation IDs (from EnterFunction) to persistent lexical scope IDs (from Locals/Closure).
   const invocationToLexicalMap = {};
+  // Accumulates the state of heap-allocated objects/arrays/functions throughout execution.
   const heapSnapshot = {};
+  // Tracks lexical scope IDs that are known to be closed over but whose scope object hasn't been created yet.
   const pendingPersistence = new Set();
-  let pendingLexicalScopeId = null; // This will be modified by _processLocalsEvent via closure
+  // Temporarily holds the lexical scope ID created by a 'Locals' event, to be associated with the next 'EnterFunction' invocation ID.
+  let pendingLexicalScopeId = null;
+  // Stores the line number where a function call occurred, used by the subsequent 'EnterFunction' event.
   const callSiteLineStack = [];
   // --- End Internal State ---
 
@@ -34,6 +41,38 @@ function storyReducer(initialState, rawEvents) {
   }
 
   // --- Helper Functions ---
+
+  // Handles 'BeforeCall' events: pushes callSiteLine onto the stack
+  function _processBeforeCallEvent(evt, callSiteLineStack) {
+    callSiteLineStack.push(evt.payload.callSiteLine);
+  }
+
+  // Handles 'Step' events: generates STEP_LINE story event with scope and heap snapshots
+  function _processStepEvent(evt, story, buildScopesSnapshot, heapSnapshot) {
+    console.log(`[storyReducer] Handling Step for line ${evt.payload.line}`);
+    const scopesSnapshot = buildScopesSnapshot();
+    const heapSnapshotClone = _.cloneDeep(heapSnapshot);
+
+    story.push({
+      type: 'STEP_LINE',
+      payload: {
+        line: evt.payload.line,
+        col: evt.payload.col,
+        snippet: evt.payload.snippet,
+        scopes: scopesSnapshot,
+        heap: heapSnapshotClone,
+        statementType: evt.payload.statementType
+      }
+    });
+    console.log('[storyReducer] Pushed STEP_LINE event.');
+  }
+
+  // Handles 'HEAP_UPDATE' events: updates heapSnapshot
+  function _processHeapUpdateEvent(evt, heapSnapshot) {
+    const { heapId, value } = evt.payload;
+    console.log(`[storyReducer] Updating heap snapshot for ID: ${heapId}`);
+    heapSnapshot[heapId] = value;
+  }
 
   // Handles console events: ConsoleLog, ConsoleWarn, ConsoleError
   function _processConsoleEvent(evt, story) {
@@ -280,8 +319,8 @@ function storyReducer(initialState, rawEvents) {
     }
 
     // Update the outer 'pendingLexicalScopeId' via closure
-    pendingLexicalScopeId = lexicalScopeId;
-    console.log(`[storyReducer] Stored pendingLexicalScopeId = ${pendingLexicalScopeId}`);
+    console.log(`[storyReducer] Stored pendingLexicalScopeId = ${lexicalScopeId}`);
+    return lexicalScopeId;
   }
 
 
@@ -292,18 +331,16 @@ function storyReducer(initialState, rawEvents) {
     try {
       switch (evt.type) {
         case 'HEAP_UPDATE': {
-          const { heapId, value } = evt.payload;
-          console.log(`[storyReducer] Updating heap snapshot for ID: ${heapId}`);
-          heapSnapshot[heapId] = value;
+          _processHeapUpdateEvent(evt, heapSnapshot);
           break;
         }
         case 'BeforeCall': {
-          callSiteLineStack.push(evt.payload.callSiteLine);
+          _processBeforeCallEvent(evt, callSiteLineStack);
           break;
         }
         case 'Locals': {
           // Call the extracted helper function
-          _processLocalsEvent(evt, activeScopes, pendingPersistence);
+          pendingLexicalScopeId = _processLocalsEvent(evt, activeScopes, pendingPersistence);
           break;
         }
         case 'Closure': {
@@ -322,22 +359,7 @@ function storyReducer(initialState, rawEvents) {
           break;
         }
         case 'Step': {
-          console.log(`[storyReducer] Handling Step for line ${evt.payload.line}`);
-          const scopesSnapshot = buildScopesSnapshot();
-          const heapSnapshotClone = _.cloneDeep(heapSnapshot);
-
-          story.push({
-            type: 'STEP_LINE',
-            payload: {
-              line: evt.payload.line,
-              col: evt.payload.col,
-              snippet: evt.payload.snippet,
-              scopes: scopesSnapshot,
-              heap: heapSnapshotClone,
-              statementType: evt.payload.statementType
-            }
-          });
-          console.log('[storyReducer] Pushed STEP_LINE event.');
+          _processStepEvent(evt, story, buildScopesSnapshot, heapSnapshot);
           break;
         }
         case 'EnterFunction': {
