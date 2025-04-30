@@ -4,14 +4,14 @@ import { FrameData } from '../../types'; // Adjust path as needed
 import VariableDisplay from './VariableDisplay';
 
 interface FrameNodeProps {
-  data: FrameData;
+  data: FrameData & { isActive?: boolean };
   id: string;
 }
 
 const FrameNode: React.FC<FrameNodeProps> = ({ data, id }) => {
   return (
     <div
-      className="react-flow__node-default bg-white border border-sky-300 rounded-lg shadow-md px-4 py-3 min-w-[170px] relative flex flex-col gap-1"
+      className={`react-flow__node-default bg-white border border-sky-300 rounded-lg shadow-md px-4 py-3 min-w-[170px] relative flex flex-col gap-1${data.isActive ? ' frame-node-active' : ''}`}
     >
       <Handle type="target" position={Position.Left} style={{ background: '#0ea5e9' }} />
       <div className="absolute top-2 right-3" title="Frame">

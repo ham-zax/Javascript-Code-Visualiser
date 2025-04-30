@@ -31,7 +31,10 @@ const VariableDisplay: React.FC<VariableDisplayProps> = ({ variables, scopeId })
     <table className="w-full text-left text-xs border-collapse">
       <tbody>
         {variables.map((variable) => (
-          <tr key={`${scopeId}-${variable.varName}`} className="border-t border-gray-200">
+          <tr
+            key={`${scopeId}-${variable.varName}`}
+            className={`border-t border-gray-200${variable.hasChanged ? ' variable-changed' : ''}`}
+          >
             <td className={`py-0.5 pr-2 font-medium ${getBindingClass(variable.bindingType)}`}>
               {getBindingIcon(variable.bindingType)}
               {variable.varName}:

@@ -275,3 +275,10 @@ display: block;
 /* The global @keyframes highlight-change will apply in dark mode as well. */
 /* Removed invalid nested keyframe definition. */
 /* --- End Scope Visualization Styles --- */
+.frame-node-active {
+  border-width: 3px !important;
+  border-color: oklch(0.6 0.15 250) !important; /* Bright blue */
+  box-shadow: 0 0 10px oklch(0.6 0.15 250 / 40%);
+  background-color: oklch(0.98 0.05 250 / 60%);
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+}

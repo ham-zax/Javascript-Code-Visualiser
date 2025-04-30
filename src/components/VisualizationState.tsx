@@ -94,6 +94,9 @@ export default function VisualizationState({
         const yGap = 30; // Vertical gap between elements
         let currentY = 0;
 
+        // --- Identify Active Frame ---
+        const activeFrameScopeId = callStack.length > 0 ? callStack[callStack.length - 1].scopeId : null;
+
         // --- 1. Create Frame Nodes (Call Stack) ---
         const frameNodeIds = new Set<string>();
         callStack.forEach((frame) => {
@@ -114,7 +117,10 @@ export default function VisualizationState({
                 id: frameId,
                 type: 'frame',
                 position: { x: frameX, y: currentY },
-                data: frameData,
+                data: {
+                    ...frameData,
+                    isActive: activeFrameScopeId === frame.scopeId
+                }
             });
             // Estimate height roughly for positioning
             const estimatedHeight = 60 + Object.keys(frameData.variables).length * 25;
@@ -201,8 +207,8 @@ export default function VisualizationState({
                                  // sourceHandle: `var-${varName}`,
                                  target: targetId,
                                  type: 'smoothstep', // Or 'default', 'step'
-                                 // label: varName, // Label edge with variable name
-                                 style: { stroke: '#60a5fa', strokeWidth: 2 }, // Blueish
+                                 label: varName, // Label edge with variable name
+                                 style: { stroke: '#60a5fa', strokeWidth: 1.5 }, // Blueish
                                  markerEnd: { type: MarkerType.ArrowClosed, color: '#60a5fa' },
                                  animated: false, // Keep false for clarity unless state change is highlighted
                              });
@@ -211,6 +217,32 @@ export default function VisualizationState({
                          }
                      }
                  });
+             }
+         });
+
+         // Edges from Heap Objects' properties to Heap (for nested references)
+         newNodes.forEach(node => {
+             if (node.type === 'heap') {
+                 const heapData = node.data as HeapObjectData;
+                 if (heapData.type === 'object' && heapData.properties) {
+                     Object.entries(heapData.properties).forEach(([varName, variable]) => {
+                         if ((variable.type === 'reference' || variable.type === 'function') && variable.heapId) {
+                             const targetId = `heap-${variable.heapId}`;
+                             if (heapNodeIds.has(targetId)) {
+                                 newEdges.push({
+                                     id: `edge-${node.id}-${varName}-to-${targetId}`,
+                                     source: node.id,
+                                     target: targetId,
+                                     type: 'smoothstep',
+                                     label: varName,
+                                     style: { stroke: '#60a5fa', strokeWidth: 1.5 },
+                                     markerEnd: { type: MarkerType.ArrowClosed, color: '#60a5fa' },
+                                     animated: false,
+                                 });
+                             }
+                         }
+                     });
+                 }
              }
          });
 

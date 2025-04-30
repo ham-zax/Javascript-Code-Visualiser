@@ -8,6 +8,7 @@ This file tracks the project's current status, including recent changes, current
 ## Current Focus
 
 *   
+[2025-04-30 06:34:05] - Implementing visual edges for variable references in `VisualizationState.tsx` to clarify data relationships between scopes and the heap.
 
 ## Recent Changes
 
